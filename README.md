@@ -69,18 +69,18 @@ This only contains the application — the bootloader and partition table must a
 
 **Requirements:** Python + esptool
 
-```bash
+```
 pip install esptool
 ```
 
 **Flash command (update only):**
 
-```bash
-# Windows — replace COM3 with your actual port
-esptool.py --chip esp32c3 --port COM3 --baud 460800 write_flash 0x10000 BusyLight-firmware-v0.1.0.bin
+```
+# Windows — <COM-Port> ersetzen, z. B. COM3
+esptool --chip esp32c3 --port <COM-Port> --baud 460800 write_flash 0x10000 BusyLight-firmware-<version>.bin
 
-# Linux / macOS
-esptool.py --chip esp32c3 --port /dev/ttyUSB0 --baud 460800 write_flash 0x10000 BusyLight-firmware-v0.1.0.bin
+# Linux / macOS — <port> ersetzen, z. B. /dev/ttyUSB0
+esptool --chip esp32c3 --port <port> --baud 460800 write_flash 0x10000 BusyLight-firmware-<version>.bin
 ```
 
 > **Fresh device?** Use the Arduino IDE route above — it flashes bootloader, partition table, and app in one go.

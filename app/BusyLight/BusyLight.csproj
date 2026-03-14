@@ -1,0 +1,31 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <!-- Target Windows 10 build 22621 (22H2) or later for full WinRT BLE support -->
+    <TargetFramework>net8.0-windows10.0.22621.0</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AllowUnsafeBlocks>false</AllowUnsafeBlocks>
+    <!-- WinForms application defaults -->
+    <ApplicationVisualStyles>true</ApplicationVisualStyles>
+    <ApplicationUseCompatibleTextRendering>false</ApplicationUseCompatibleTextRendering>
+    <ApplicationHighDpiMode>SystemAware</ApplicationHighDpiMode>
+    <AssemblyName>BusyLight</AssemblyName>
+    <RootNamespace>BusyLight</RootNamespace>
+    <!-- Version — overridden by CI via -p:Version=x.y.z -->
+    <Version>0.1.0</Version>
+    <FileVersion>0.1.0</FileVersion>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- MSAL authentication library -->
+    <PackageReference Include="Microsoft.Identity.Client" Version="4.65.0" />
+    <!-- Persistent token cache (DPAPI-encrypted on Windows) -->
+    <PackageReference Include="Microsoft.Identity.Client.Extensions.Msal" Version="4.65.0" />
+    <!-- Microsoft Graph SDK v5 -->
+    <PackageReference Include="Microsoft.Graph" Version="5.56.0" />
+  </ItemGroup>
+
+</Project>

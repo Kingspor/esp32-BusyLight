@@ -53,8 +53,7 @@ GPIO 5       ───▶  DIN
 - **ESP32 board support** — install via *Boards Manager*:
   `https://raw.githubusercontent.com/espressif/arduino-esp32/gh-pages/package_esp32_index.json`
   Then install **esp32 by Espressif Systems** (v3.x or later)
-- **FastLED** library — install via *Library Manager*
-- **NimBLE-Arduino** library — install via *Library Manager*
+- **Adafruit NeoPixel** library — install via *Library Manager*
 
 ### Flashing
 1. Open `firmware/BusyLight/BusyLight.ino` in Arduino IDE.

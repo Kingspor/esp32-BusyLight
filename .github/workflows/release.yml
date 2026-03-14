@@ -65,8 +65,7 @@ jobs:
 
       - name: Install firmware libraries
         run: |
-          arduino-cli lib install "NimBLE-Arduino"
-          arduino-cli lib install "FastLED"
+          arduino-cli lib install "Adafruit NeoPixel"
 
       - name: Compile firmware
         run: |

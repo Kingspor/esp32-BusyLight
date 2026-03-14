@@ -1,0 +1,25 @@
+# Normalize line endings to LF in the repo; checkout as CRLF on Windows
+* text=auto
+
+# C# / .NET — always LF
+*.cs    text eol=lf
+*.csproj text eol=lf
+*.sln   text eol=lf
+*.resx  text eol=lf
+
+# Arduino / C++ — always LF
+*.ino   text eol=lf
+*.cpp   text eol=lf
+*.h     text eol=lf
+
+# Config / data
+*.json  text eol=lf
+*.md    text eol=lf
+*.txt   text eol=lf
+
+# Binaries — no conversion
+*.dll   binary
+*.exe   binary
+*.pdb   binary
+*.png   binary
+*.ico   binary

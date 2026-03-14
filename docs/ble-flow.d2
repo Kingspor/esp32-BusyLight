@@ -1,0 +1,105 @@
+# BusyLight — BLE Device Discovery & Connection Flow
+# Render with: d2 ble-flow.d2 ble-flow.svg
+
+direction: right
+
+# ─── Actors ──────────────────────────────────────────────────────────────────
+
+app: BusyLight App {
+  shape: rectangle
+  style.fill: "#dbeafe"
+}
+
+windows_ble: Windows BLE Stack {
+  shape: rectangle
+  style.fill: "#f3f4f6"
+}
+
+device: ESP32 BusyLight {
+  shape: rectangle
+  style.fill: "#d1fae5"
+}
+
+settings: appsettings.json {
+  shape: cylinder
+  style.fill: "#fef3c7"
+}
+
+# ─── First-Run Flow ───────────────────────────────────────────────────────────
+
+first_run: First-Run (BleDevice == null) {
+  shape: sequence_diagram
+
+  app -> app: "Load appsettings.json\nBleDevice = null"
+  app -> app: "Show BlePickerForm"
+
+  app -> windows_ble: "DiscoverAsync(timeout=10s)\nActive scan"
+  device -> windows_ble: "Advertisement (LocalName=\"BusyLight-D48D\")"
+  windows_ble -> app: "Received: address=0xACA704BF8DD4, name=\"BusyLight-D48D\""
+
+  app -> app: "User selects device in list"
+  app -> settings: "Save BleDevice {Name, Address}"
+
+  app -> app: "StartBleService(address)"
+}
+
+# ─── Normal-Start / Known-Device Flow ────────────────────────────────────────
+
+known_device: Subsequent Start (BleDevice known) {
+  shape: sequence_diagram
+
+  app -> app: "Load appsettings.json\nBleDevice = {Name, Address}"
+  app -> app: "StartBleService(targetAddress)"
+  app -> windows_ble: "StartWatcher() – Active scan\n(wait for fresh advertisement\nbefore calling FromBluetoothAddressAsync)"
+
+  device -> windows_ble: "Advertisement received"
+  windows_ble -> app: "OnAdvertisementReceived\naddress == targetAddress"
+
+  app -> windows_ble: "StopWatcher()"
+  app -> windows_ble: "FromBluetoothAddressAsync(address)"
+  windows_ble -> device: "GATT connect"
+  device -> windows_ble: "Connected"
+  windows_ble -> app: "BluetoothLEDevice"
+
+  app -> windows_ble: "GetGattServicesForUuidAsync(feda0100-…)"
+  windows_ble -> app: "GattService"
+  app -> windows_ble: "GetCharacteristicsForUuidAsync(feda0101-…)"
+  windows_ble -> app: "GattCharacteristic (WRITE)"
+
+  app -> app: "ConnectionChanged(Connected)"
+  app -> device: "WriteWithoutResponse([R,G,B,Brightness,Mode,Speed])"
+}
+
+# ─── Reconnect Flow ───────────────────────────────────────────────────────────
+
+reconnect: Disconnect & Reconnect {
+  shape: sequence_diagram
+
+  device -> windows_ble: "Device powers off / out of range"
+  windows_ble -> app: "ConnectionStatusChanged(Disconnected)"
+  app -> app: "HandleDisconnect()\n_connected=false, _addressKnown=false\nConnectionChanged(Disconnected)"
+
+  app -> app: "RetryLoopAsync tick\n(every BleRetryIntervalSeconds)"
+  app -> windows_ble: "StartWatcher() again"
+  app -> app: "ConnectionChanged(Searching)"
+
+  device -> windows_ble: "Device powers on → Advertisement"
+  windows_ble -> app: "OnAdvertisementReceived"
+  app -> app: "→ ConnectAsync() [same as normal-start]"
+  app -> device: "Re-send current presence command"
+}
+
+# ─── Re-scan from Settings ────────────────────────────────────────────────────
+
+rescan: Re-scan (Settings → \"Neues Gerät suchen\") {
+  shape: sequence_diagram
+
+  app -> app: "Stop old BleService"
+  app -> app: "Show BlePickerForm"
+  app -> windows_ble: "DiscoverAsync(timeout=10s)"
+  device -> windows_ble: "Advertisements from all BusyLight devices"
+  windows_ble -> app: "List of {Name, Address}"
+  app -> app: "User picks new device"
+  app -> settings: "Save new BleDevice"
+  app -> app: "StartBleService(new address)"
+}

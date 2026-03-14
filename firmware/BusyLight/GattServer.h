@@ -1,0 +1,52 @@
+#pragma once
+
+// Only project headers here — all BLE library headers are included in GattServer.cpp.
+// This avoids the Windows case-insensitive filename collision between our
+// GattServer.h and the ESP32 library's BLEServer.h.
+#include "config.h"
+#include "LedController.h"
+
+// Forward declarations for BLE types used as pointer members.
+// The full definitions are provided by the BLE library includes in GattServer.cpp.
+class BLEServer;
+class BLECharacteristic;
+
+// Manages the BLE GATT server, advertising, and connection lifecycle.
+// Call begin() once from setup() and update() on every loop() iteration.
+class BleServer {
+public:
+    BleServer();
+
+    // Initialise the BLE stack, create GATT services/characteristics,
+    // and start advertising.
+    void begin(LedController& ledController);
+
+    // Handle deferred advertising restart after a client disconnects.
+    // Must be called from loop().
+    void update();
+
+    // Returns true while a client is connected.
+    bool isConnected() const;
+
+private:
+    BLEServer*         _pServer;
+    BLECharacteristic* _pLedChar;
+    BLECharacteristic* _pTelemetryChar;
+
+    // Tracks the connection state across two consecutive loop() calls
+    // so advertising can be restarted after a disconnect.
+    volatile bool _deviceConnected;
+    bool          _oldConnected;
+
+    // Reference to the LED controller, set in begin().
+    LedController* _ledController;
+
+    // Callback class implementations live in GattServer.cpp.
+    // Only forward-declared here to keep BLE headers out of this file.
+    class ServerCallbacks;
+    class LedCharCallbacks;
+
+    // Heap-allocated callback instances (lifetime == BleServer lifetime)
+    ServerCallbacks*  _serverCallbacks;
+    LedCharCallbacks* _ledCharCallbacks;
+};

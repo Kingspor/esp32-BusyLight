@@ -18,9 +18,25 @@
 #define BLE_ADV_INTERVAL_MAX  1600
 
 // BLE service and characteristic UUIDs
-#define SERVICE_UUID        "feda0100-51a7-4fb7-a27b-c720bef16ef7"
-#define LED_CHAR_UUID       "feda0101-51a7-4fb7-a27b-c720bef16ef7"  // WRITE | WRITE_NO_RESPONSE
-#define TELEMETRY_CHAR_UUID "feda0102-51a7-4fb7-a27b-c720bef16ef7"  // READ | NOTIFY (stub)
+#define SERVICE_UUID          "feda0100-51a7-4fb7-a27b-c720bef16ef7"
+#define LED_CHAR_UUID         "feda0101-51a7-4fb7-a27b-c720bef16ef7"  // WRITE | WRITE_NO_RESPONSE
+#define TELEMETRY_CHAR_UUID   "feda0102-51a7-4fb7-a27b-c720bef16ef7"  // READ | NOTIFY (stub)
+#define PROTOCOL_VER_CHAR_UUID "feda0103-51a7-4fb7-a27b-c720bef16ef7" // READ — protocol version byte
+
+// ============================================================
+// Protocol versioning
+// ============================================================
+// Increment PROTOCOL_VERSION only on BREAKING changes to the BLE communication:
+//   - Packet size changes (CMD_PACKET_SIZE)
+//   - Byte positions are reordered or repurposed
+//   - Service or characteristic UUIDs change
+//   - New mandatory characteristics are added
+//
+// Adding new animation modes is BACKWARDS-COMPATIBLE — do NOT increment.
+//
+// Version history:
+//   1  (v0.1.0)  Initial release: 6-byte command packet (R,G,B,Brightness,Mode,Speed)
+#define PROTOCOL_VERSION  1
 
 // ============================================================
 // LED command packet layout (6 bytes)

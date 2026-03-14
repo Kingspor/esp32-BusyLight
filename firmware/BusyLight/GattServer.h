@@ -32,6 +32,7 @@ private:
     BLEServer*         _pServer;
     BLECharacteristic* _pLedChar;
     BLECharacteristic* _pTelemetryChar;
+    BLECharacteristic* _pProtocolVerChar;
 
     // Tracks the connection state across two consecutive loop() calls
     // so advertising can be restarted after a disconnect.

@@ -53,7 +53,8 @@ GPIO 5       ───▶  DIN
 - **ESP32 board support** — install via *Boards Manager*:
   `https://raw.githubusercontent.com/espressif/arduino-esp32/gh-pages/package_esp32_index.json`
   Then install **esp32 by Espressif Systems** (v3.x or later)
-- **Adafruit NeoPixel** library — install via *Library Manager*
+- **FastLED** library — install via *Library Manager*
+- **NimBLE-Arduino** library — install via *Library Manager*
 
 ### Flashing
 1. Open `firmware/BusyLight/BusyLight.ino` in Arduino IDE.
@@ -169,6 +170,35 @@ Start with Windows  ✓
 ─────────────────
 Exit
 ```
+
+---
+
+## Compatibility
+
+App and firmware communicate over a **versioned BLE protocol**. Each release specifies its protocol version — both components must use the **same version** to work correctly.
+
+| Release | Protocol Version | Compatible firmware | Compatible app |
+|---------|:----------------:|---------------------|----------------|
+| v0.1.0  | 1                | v0.1.0              | v0.1.0         |
+
+**What triggers a protocol version bump?**
+
+Only **breaking changes** to the BLE communication require a bump:
+
+- Packet size changes (currently 6 bytes: R, G, B, Brightness, Mode, Speed)
+- Byte positions are reordered or repurposed
+- Service or characteristic UUIDs change
+- New mandatory characteristics are added
+
+Adding new animation modes is fully backwards-compatible and does **not** require a version bump.
+
+**What happens on mismatch?**
+
+The app reads the protocol version characteristic (`feda0103-…`) immediately after connecting. If the firmware reports a different version, a balloon notification is shown:
+
+> *"Protokoll-Inkompatibilität auf 'BusyLight-XXYY': Firmware v0 ≠ App erwartet v1. Bitte Firmware oder App aktualisieren."*
+
+The connection stays open, but LED commands may not work as expected until both sides are updated.
 
 ---
 

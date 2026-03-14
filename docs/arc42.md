@@ -235,6 +235,26 @@ CI publishes via `dotnet publish -p:PublishProfile=Release-win-x64` on git tag p
 | 4 | Mode | 0=Static, 1=Pulse, 2=Chase, 3=Rainbow, 4=Blink, 5=Fill |
 | 5 | Speed | 0–255 (higher = faster) |
 
+### Protocol Versioning
+
+A single read-only byte characteristic (`feda0103-…`) exposes the firmware's protocol version. The app reads it on every connect and emits a balloon warning on mismatch. The connection is kept open; LED commands may not work correctly until both sides are updated.
+
+**Compatibility matrix:**
+
+| Release | Protocol Version | Notes |
+|---------|:----------------:|-------|
+| v0.1.0  | 1                | Initial release |
+
+**Rules for incrementing `PROTOCOL_VERSION` (in `firmware/BusyLight/config.h`):**
+
+| Change | Bump required? |
+|--------|:--------------:|
+| New animation mode (additive) | No |
+| Packet size changes | **Yes** |
+| Byte position/meaning changes | **Yes** |
+| UUID changes | **Yes** |
+| New mandatory characteristic | **Yes** |
+
 ---
 
 ## 9. Architecture Decisions

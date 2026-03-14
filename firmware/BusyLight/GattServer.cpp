@@ -65,6 +65,7 @@ BleServer::BleServer()
     : _pServer(nullptr),
       _pLedChar(nullptr),
       _pTelemetryChar(nullptr),
+      _pProtocolVerChar(nullptr),
       _deviceConnected(false),
       _oldConnected(false),
       _ledController(nullptr),
@@ -119,6 +120,16 @@ void BleServer::begin(LedController& ledController) {
     _pTelemetryChar->addDescriptor(new BLE2902());
     // Stub value so a connected client can read something meaningful
     _pTelemetryChar->setValue("BusyLight v1.0");
+
+    // Protocol version characteristic: read-only single byte.
+    // The Windows app reads this on connect and warns if the version is incompatible.
+    _pProtocolVerChar = pService->createCharacteristic(
+        PROTOCOL_VER_CHAR_UUID,
+        BLECharacteristic::PROPERTY_READ
+    );
+    uint8_t protocolVersion = PROTOCOL_VERSION;
+    _pProtocolVerChar->setValue(&protocolVersion, 1);
+    Serial.printf("[BLE] Protocol version: %u\n", protocolVersion);
 
     // Start the service
     pService->start();

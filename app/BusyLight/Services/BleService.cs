@@ -26,6 +26,15 @@ public sealed class BleService : IDisposable
     private static readonly Guid LedCharUuid =
         Guid.Parse("feda0101-51a7-4fb7-a27b-c720bef16ef7");
 
+    private static readonly Guid ProtocolVerCharUuid =
+        Guid.Parse("feda0103-51a7-4fb7-a27b-c720bef16ef7");
+
+    /// <summary>
+    /// Protocol version this app build expects from the firmware.
+    /// Must match <c>PROTOCOL_VERSION</c> in <c>firmware/BusyLight/config.h</c>.
+    /// </summary>
+    private const byte ExpectedProtocolVersion = 1;
+
     // ── Events ────────────────────────────────────────────────────────────────
 
     /// <summary>
@@ -329,6 +338,10 @@ public sealed class BleService : IDisposable
             _connected       = true;
             _lastSentCommand = null; // Force re-send after reconnect
 
+            // Read the protocol version characteristic (feda0103-…).
+            // Old firmware without this characteristic is treated as version 0 (incompatible).
+            await CheckProtocolVersionAsync(service).ConfigureAwait(false);
+
             Debug.WriteLine($"[BLE:{DeviceName}] Connected.");
             CurrentState = BleConnectionState.Connected;
             ConnectionChanged?.Invoke(this, BleConnectionState.Connected);
@@ -342,6 +355,48 @@ public sealed class BleService : IDisposable
         finally
         {
             _connectLock.Release();
+        }
+    }
+
+    private async Task CheckProtocolVersionAsync(GattDeviceService service)
+    {
+        var verResult = await service
+            .GetCharacteristicsForUuidAsync(ProtocolVerCharUuid, BluetoothCacheMode.Uncached)
+            .AsTask()
+            .ConfigureAwait(false);
+
+        if (verResult.Status != GattCommunicationStatus.Success
+            || verResult.Characteristics.Count == 0)
+        {
+            // Firmware predates protocol versioning — treat as version 0.
+            ErrorOccurred?.Invoke(this,
+                $"Firmware auf '{DeviceName}' ist veraltet (kein Protokoll-Versions-Merkmal). " +
+                $"Bitte Firmware auf v{ExpectedProtocolVersion} aktualisieren.");
+            return;
+        }
+
+        var readResult = await verResult.Characteristics[0]
+            .ReadValueAsync(BluetoothCacheMode.Uncached)
+            .AsTask()
+            .ConfigureAwait(false);
+
+        if (readResult.Status != GattCommunicationStatus.Success)
+        {
+            Debug.WriteLine($"[BLE:{DeviceName}] Could not read protocol version: {readResult.Status}");
+            return;
+        }
+
+        var reader = DataReader.FromBuffer(readResult.Value);
+        byte firmwareVersion = reader.ReadByte();
+
+        Debug.WriteLine($"[BLE:{DeviceName}] Protocol version: firmware={firmwareVersion}, expected={ExpectedProtocolVersion}");
+
+        if (firmwareVersion != ExpectedProtocolVersion)
+        {
+            ErrorOccurred?.Invoke(this,
+                $"Protokoll-Inkompatibilität auf '{DeviceName}': " +
+                $"Firmware v{firmwareVersion} ≠ App erwartet v{ExpectedProtocolVersion}. " +
+                $"Bitte Firmware oder App aktualisieren.");
         }
     }
 

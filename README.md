@@ -124,7 +124,6 @@ with PKCE — no client secret is required.
 ## Windows App Setup
 
 ### Prerequisites
-- [.NET 8 SDK](https://dotnet.microsoft.com/download/dotnet/8)
 - Windows 10 version 22H2 (build 22621) or later (required for WinRT BLE APIs)
 - Bluetooth adapter that supports BLE
 
@@ -170,7 +169,13 @@ Open that file and fill in your Azure AD credentials:
 | `Mode` | Animation mode (see table below) |
 | `Speed` | Animation speed 0–255 (higher = faster) |
 
-### Build and run
+### Option A — Pre-built executable (recommended)
+
+Download `BusyLight.exe` from the [latest GitHub Release](https://github.com/Kingspor/esp32-BusyLight/releases/latest) and run it directly — no SDK or build step required.
+
+### Option B — Build from source
+
+Requires the [.NET 8 SDK](https://dotnet.microsoft.com/download/dotnet/8).
 
 ```bash
 cd app/BusyLight

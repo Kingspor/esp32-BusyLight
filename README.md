@@ -62,6 +62,30 @@ GPIO 5       ───▶  DIN
 4. Select the correct COM port and click **Upload**.
 5. Open the Serial Monitor at **115200 baud** to verify output.
 
+### Flashing from a pre-built binary (release download)
+
+Each [GitHub Release](https://github.com/Kingspor/esp32-BusyLight/releases) includes a pre-compiled `BusyLight-firmware-vX.Y.Z.bin`.
+This only contains the application — the bootloader and partition table must already be present on the device (i.e. you flashed via Arduino IDE at least once before).
+
+**Requirements:** Python + esptool
+
+```bash
+pip install esptool
+```
+
+**Flash command (update only):**
+
+```bash
+# Windows — replace COM3 with your actual port
+esptool.py --chip esp32c3 --port COM3 --baud 460800 write_flash 0x10000 BusyLight-firmware-v0.1.0.bin
+
+# Linux / macOS
+esptool.py --chip esp32c3 --port /dev/ttyUSB0 --baud 460800 write_flash 0x10000 BusyLight-firmware-v0.1.0.bin
+```
+
+> **Fresh device?** Use the Arduino IDE route above — it flashes bootloader, partition table, and app in one go.
+> After that, the `.bin` from releases is sufficient for all future updates.
+
 ### Verifying the firmware without the Windows app
 Use the **nRF Connect** app (Android / iOS):
 1. Scan — the device appears as `BusyLight`.

@@ -19,6 +19,8 @@ partial class SettingsForm
         mnuSpeichern    = new ToolStripMenuItem();
         mnuTrennstrich  = new ToolStripSeparator();
         mnuSchliessen   = new ToolStripMenuItem();
+        mnuHilfe        = new ToolStripMenuItem();
+        mnuDokumentation = new ToolStripMenuItem();
         tabControl      = new TabControl();
         tabAllgemein    = new TabPage();
         grpAzure        = new GroupBox();
@@ -52,10 +54,14 @@ partial class SettingsForm
         tabZuordnung    = new TabPage();
         lblZuordnungHint = new Label();
         pnlZuordnung    = new Panel();
-        statusStrip = new StatusStrip();
-        sslTeams    = new ToolStripStatusLabel();
-        sslSep      = new ToolStripStatusLabel();
-        sslBle      = new ToolStripStatusLabel();
+        statusStrip  = new StatusStrip();
+        sslTeams     = new ToolStripStatusLabel();
+        sslSep       = new ToolStripStatusLabel();
+        sslBle       = new ToolStripStatusLabel();
+        sslSep2      = new ToolStripStatusLabel();
+        sslProtocol  = new ToolStripStatusLabel();
+        sslSep3      = new ToolStripStatusLabel();
+        sslVersion   = new ToolStripStatusLabel();
 
         tabZuordnung.SuspendLayout();
         menuStrip.SuspendLayout();
@@ -72,7 +78,7 @@ partial class SettingsForm
         SuspendLayout();
 
         // menuStrip
-        menuStrip.Items.AddRange(new ToolStripItem[] { mnuDatei });
+        menuStrip.Items.AddRange(new ToolStripItem[] { mnuDatei, mnuHilfe });
         menuStrip.Location = new Point(0, 0);
         menuStrip.Name = "menuStrip";
         menuStrip.Size = new Size(710, 24);
@@ -100,6 +106,16 @@ partial class SettingsForm
         mnuSchliessen.Size = new Size(126, 22);
         mnuSchliessen.Text = "Schließen";
         mnuSchliessen.Click += mnuSchliessen_Click;
+
+        mnuHilfe.DropDownItems.AddRange(new ToolStripItem[] { mnuDokumentation });
+        mnuHilfe.Name = "mnuHilfe";
+        mnuHilfe.Size = new Size(44, 20);
+        mnuHilfe.Text = "Hilfe";
+
+        mnuDokumentation.Name = "mnuDokumentation";
+        mnuDokumentation.Size = new Size(170, 22);
+        mnuDokumentation.Text = "Dokumentation öffnen";
+        mnuDokumentation.Click += mnuDokumentation_Click;
 
         // tabControl
         tabControl.Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right;
@@ -359,7 +375,8 @@ partial class SettingsForm
         pnlZuordnung.TabIndex = 1;
 
         // statusStrip
-        statusStrip.Items.AddRange(new ToolStripItem[] { sslTeams, sslSep, sslBle });
+        statusStrip.Items.AddRange(new ToolStripItem[]
+            { sslTeams, sslSep, sslBle, sslSep2, sslProtocol, sslSep3, sslVersion });
         statusStrip.Location = new Point(0, 437);
         statusStrip.Name = "statusStrip";
         statusStrip.Size = new Size(710, 22);
@@ -376,6 +393,20 @@ partial class SettingsForm
         sslBle.Text      = "BLE: Suche…";
         sslBle.Spring    = true;
         sslBle.TextAlign = ContentAlignment.MiddleLeft;
+
+        sslSep2.Name      = "sslSep2";
+        sslSep2.Text      = " | ";
+        sslSep2.ForeColor = SystemColors.GrayText;
+
+        sslProtocol.Name = "sslProtocol";
+        sslProtocol.Text = "Protokoll: —";
+
+        sslSep3.Name      = "sslSep3";
+        sslSep3.Text      = " | ";
+        sslSep3.ForeColor = SystemColors.GrayText;
+
+        sslVersion.Name = "sslVersion";
+        sslVersion.Text = "App v—";
 
         // SettingsForm
         AutoScaleDimensions = new SizeF(7F, 15F);
@@ -421,6 +452,8 @@ partial class SettingsForm
     private System.Windows.Forms.ToolStripMenuItem      mnuSpeichern         = default!;
     private System.Windows.Forms.ToolStripSeparator     mnuTrennstrich       = default!;
     private System.Windows.Forms.ToolStripMenuItem      mnuSchliessen        = default!;
+    private System.Windows.Forms.ToolStripMenuItem      mnuHilfe             = default!;
+    private System.Windows.Forms.ToolStripMenuItem      mnuDokumentation     = default!;
 
     private System.Windows.Forms.TabControl             tabControl           = default!;
     private System.Windows.Forms.TabPage                tabAllgemein         = default!;
@@ -465,4 +498,8 @@ partial class SettingsForm
     private System.Windows.Forms.ToolStripStatusLabel   sslTeams             = default!;
     private System.Windows.Forms.ToolStripStatusLabel   sslSep               = default!;
     private System.Windows.Forms.ToolStripStatusLabel   sslBle               = default!;
+    private System.Windows.Forms.ToolStripStatusLabel   sslSep2              = default!;
+    private System.Windows.Forms.ToolStripStatusLabel   sslProtocol          = default!;
+    private System.Windows.Forms.ToolStripStatusLabel   sslSep3              = default!;
+    private System.Windows.Forms.ToolStripStatusLabel   sslVersion           = default!;
 }

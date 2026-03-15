@@ -83,6 +83,12 @@ public sealed partial class SettingsForm : Form
 
     private void SettingsForm_Load(object? sender, EventArgs e)
     {
+        var ver = System.Reflection.Assembly.GetEntryAssembly()
+                      ?.GetName().Version;
+        sslVersion.Text = ver is not null
+            ? $"App v{ver.Major}.{ver.Minor}.{ver.Build}"
+            : "App v?";
+
         // Size dynamic panels to fill their respective tabs
         // pnlPresence starts at y=72 (toolbar rows above it)
         pnlPresence.Size  = new Size(tabPraesenz.ClientSize.Width  - 12,
@@ -153,9 +159,9 @@ public sealed partial class SettingsForm : Form
     }
 
     /// <summary>Update the BLE connection status display. Thread-safe.</summary>
-    public void UpdateBleStatus(string deviceName, BleConnectionState state)
+    public void UpdateBleStatus(string deviceName, BleConnectionState state, byte? protocolVersion = null)
     {
-        if (InvokeRequired) { Invoke(() => UpdateBleStatus(deviceName, state)); return; }
+        if (InvokeRequired) { Invoke(() => UpdateBleStatus(deviceName, state, protocolVersion)); return; }
 
         var (stateText, stateColor) = state switch
         {
@@ -166,6 +172,10 @@ public sealed partial class SettingsForm : Form
 
         sslBle.Text      = $"{deviceName} — {stateText}";
         sslBle.ForeColor = stateColor;
+
+        sslProtocol.Text = protocolVersion.HasValue
+            ? $"Protokoll: v{protocolVersion.Value}"
+            : "Protokoll: —";
 
         // BLE tab: show status inline with device name
         var addr = _settings.BleDevice?.Address ?? "";
@@ -211,6 +221,15 @@ public sealed partial class SettingsForm : Form
         => value.Length > 7 ? value[..7] + "****" : value;
 
     // ── Menu handlers ─────────────────────────────────────────────────────────
+
+    private void mnuDokumentation_Click(object? sender, EventArgs e)
+    {
+        System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+        {
+            FileName        = "https://github.com/Kingspor/esp32-BusyLight/tree/main/docs",
+            UseShellExecute = true,
+        });
+    }
 
     private void mnuLaden_Click(object? sender, EventArgs e)
     {

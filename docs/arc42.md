@@ -237,13 +237,14 @@ CI publishes via `dotnet publish -p:PublishProfile=Release-win-x64` on git tag p
 
 ### Protocol Versioning
 
-A single read-only byte characteristic (`feda0103-…`) exposes the firmware's protocol version. The app reads it on every connect and emits a balloon warning on mismatch. The connection is kept open; LED commands may not work correctly until both sides are updated.
+A single read-only byte characteristic (`feda0103-…`) exposes the firmware's protocol version. The app reads it on every connect, displays it in the status bar of the settings window (`Protokoll: v1`), and emits a balloon warning on mismatch. The connection is kept open; LED commands may not work correctly until both sides are updated.
 
 **Compatibility matrix:**
 
 | Release | Protocol Version | Notes |
 |---------|:----------------:|-------|
 | v0.1.0  | 1                | Initial release |
+| v0.2.0  | 1                | App-only update (status bar, docs link); firmware unchanged |
 
 **Rules for incrementing `PROTOCOL_VERSION` (in `firmware/BusyLight/config.h`):**
 

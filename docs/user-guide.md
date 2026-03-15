@@ -97,7 +97,11 @@ Open by double-clicking the tray icon.
 
 ### Status Bar (bottom)
 
-Shows the current Teams status and BLE connection state at a glance.
+Shows at a glance (left to right):
+- **Teams:** current presence status
+- **BLE device** name and connection state
+- **Protocol:** firmware protocol version (shown as `v1` when connected)
+- **App version** (e.g. `App v0.1.0`)
 
 ### Tab: Präsenz
 
@@ -141,6 +145,10 @@ Click **Neues Gerät suchen…** to scan for a different BusyLight and replace t
 ### Tab: Zuordnung
 
 Maps incoming Teams statuses to LED profiles. Useful if you want e.g. "Do Not Disturb" and "Busy" to show the same red profile.
+
+### Menu: Hilfe
+
+**Hilfe → Dokumentation öffnen** opens the online documentation in your browser.
 
 ### Saving Settings
 

@@ -109,6 +109,10 @@ jobs:
         with:
           generate_release_notes: true
           body: |
+            ## Firmware
+
+            > Die Firmware-Version ist im Release-Tag angegeben. Prüfe die [Kompatibilitätsmatrix](docs/arc42.md#protocol-versioning), ob ein Firmware-Update notwendig ist.
+
             ## Firmware flashen
 
             Die vorgebaute `.bin` kann direkt auf den ESP32-C3 geflasht werden (setzt voraus, dass Bootloader + Partition Table bereits vorhanden sind — einmalig per Arduino IDE).

@@ -316,7 +316,7 @@ public sealed class TrayApplication : ApplicationContext
                 _notifyIcon.ShowBalloonTip(3000, "BusyLight", message,
                     state == BleConnectionState.Connected ? ToolTipIcon.Info : ToolTipIcon.Warning);
 
-            _settingsForm?.UpdateBleStatus(name, state);
+            _settingsForm?.UpdateBleStatus(name, state, svc?.FirmwareProtocolVersion);
         });
 
         // Re-send the current command after reconnect so the device is in sync
@@ -467,7 +467,8 @@ public sealed class TrayApplication : ApplicationContext
         // and would otherwise overwrite whatever was set before Show().)
         _settingsForm.UpdatePresence(_currentPresence);
         if (_bleService is not null)
-            _settingsForm.UpdateBleStatus(_bleService.DeviceName, _bleService.CurrentState);
+            _settingsForm.UpdateBleStatus(_bleService.DeviceName, _bleService.CurrentState,
+                                          _bleService.FirmwareProtocolVersion);
     }
 
     private void SyncSettingsFormOverrideUi()

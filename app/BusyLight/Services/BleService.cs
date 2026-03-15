@@ -64,6 +64,12 @@ public sealed class BleService : IDisposable
     /// </summary>
     public ulong? DeviceAddress { get; private set; }
 
+    /// <summary>
+    /// Protocol version reported by the connected firmware.
+    /// Null until a device connects and the version characteristic is read.
+    /// </summary>
+    public byte? FirmwareProtocolVersion { get; private set; }
+
     // ── Private state ─────────────────────────────────────────────────────────
 
     private readonly ulong?  _targetAddress;       // null = discovery mode
@@ -388,6 +394,7 @@ public sealed class BleService : IDisposable
 
         var reader = DataReader.FromBuffer(readResult.Value);
         byte firmwareVersion = reader.ReadByte();
+        FirmwareProtocolVersion = firmwareVersion;
 
         Debug.WriteLine($"[BLE:{DeviceName}] Protocol version: firmware={firmwareVersion}, expected={ExpectedProtocolVersion}");
 
@@ -413,8 +420,9 @@ public sealed class BleService : IDisposable
     {
         if (!_connected) return;
 
-        _connected = false;
-        _ledChar   = null;
+        _connected              = false;
+        _ledChar                = null;
+        FirmwareProtocolVersion = null;
         _device?.Dispose();
         _device = null;
 

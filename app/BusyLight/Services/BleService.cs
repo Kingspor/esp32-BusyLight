@@ -2,6 +2,7 @@ using BusyLight.Models;
 using Windows.Devices.Bluetooth;
 using Windows.Devices.Bluetooth.Advertisement;
 using Windows.Devices.Bluetooth.GenericAttributeProfile;
+using Windows.Foundation;
 using Windows.Storage.Streams;
 
 namespace BusyLight.Services;
@@ -340,111 +341,9 @@ public sealed class BleService : IDisposable
             //     connection and returns it instantly without any ATT communication.
             //     This bypasses the long initial connection interval entirely.
             //
-            //  2. If the cache is cold (first-ever connection), fall back to Uncached.
-            //     GetGattServicesForUuidAsync(Uncached) TRIGGERS the physical BLE
-            //     connection and may return ERROR_BAD_COMMAND (0x80070016) while the
-            //     link-layer handshake is still completing.  In that case we wait for
-            //     ConnectionStatus == Connected on the same device object and retry —
-            //     disposing the device between retries would kill the in-progress
-            //     connection.
-            GattDeviceServicesResult? svcResult = null;
-            bool foundInCache = false;
-
-            // ── Pass 1: Cached ────────────────────────────────────────────────
-            try
-            {
-                svcResult = await _device!
-                    .GetGattServicesForUuidAsync(ServiceUuid, BluetoothCacheMode.Cached)
-                    .AsTask()
-                    .ConfigureAwait(false);
-
-                if (svcResult.Status == GattCommunicationStatus.Success
-                    && svcResult.Services.Count > 0)
-                {
-                    foundInCache = true;
-                    LogService.Log($"[BLE:{DeviceName}] Service found in Windows GATT cache.");
-                }
-                else
-                {
-                    LogService.Log($"[BLE:{DeviceName}] Cache miss ({svcResult?.Status}) — will try Uncached.");
-                    svcResult = null;
-                }
-            }
-            catch (System.Runtime.InteropServices.COMException ex)
-                when ((uint)ex.HResult == 0x80070016)
-            {
-                LogService.Log($"[BLE:{DeviceName}] ERROR_BAD_COMMAND on Cached attempt — will try Uncached.");
-                svcResult = null;
-            }
-
-            // ── Pass 2: Uncached (first-time or cache evicted) ────────────────
-            if (svcResult is null)
-            {
-                const int maxUncachedAttempts = 4;
-                for (int attempt = 0; attempt < maxUncachedAttempts; attempt++)
-                {
-                    if (attempt > 0)
-                    {
-                        // Windows reports ConnectionStatus==Connected (link layer) before the
-                        // GATT ATT layer is ready.  With Windows' default connection interval
-                        // of 698–2500 ms an ATT request times out instantly.  Wait at least
-                        // one full Windows connection interval before retrying.
-                        int delayMs = 2000 + 500 * (attempt - 1); // 2000, 2500, 3000 ms
-                        LogService.Log($"[BLE:{DeviceName}] Uncached retry {attempt + 1}/{maxUncachedAttempts} — waiting {delayMs} ms for GATT stack to settle…");
-                        await Task.Delay(delayMs).ConfigureAwait(false);
-
-                        bool linked = await WaitForConnectedAsync(_device!, TimeSpan.FromSeconds(4))
-                                            .ConfigureAwait(false);
-                        if (!linked)
-                        {
-                            LogService.Log($"[BLE:{DeviceName}] BLE link lost before retry {attempt + 1} — aborting.");
-                            break;
-                        }
-
-                        // Windows may have populated the GATT cache during the previous
-                        // Uncached attempt.  Check before issuing another Uncached request.
-                        try
-                        {
-                            var cachedRetry = await _device!
-                                .GetGattServicesForUuidAsync(ServiceUuid, BluetoothCacheMode.Cached)
-                                .AsTask()
-                                .ConfigureAwait(false);
-                            if (cachedRetry.Status == GattCommunicationStatus.Success
-                                && cachedRetry.Services.Count > 0)
-                            {
-                                foundInCache = true;
-                                svcResult    = cachedRetry;
-                                LogService.Log($"[BLE:{DeviceName}] Service found in GATT cache on retry {attempt + 1}.");
-                                break;
-                            }
-                        }
-                        catch (System.Runtime.InteropServices.COMException ex)
-                            when ((uint)ex.HResult == 0x80070016)
-                        {
-                            // Cache still cold — fall through to Uncached below.
-                        }
-                        if (svcResult is not null) break;
-                    }
-
-                    try
-                    {
-                        svcResult = await _device!
-                            .GetGattServicesForUuidAsync(ServiceUuid, BluetoothCacheMode.Uncached)
-                            .AsTask()
-                            .ConfigureAwait(false);
-
-                        if (svcResult.Status == GattCommunicationStatus.Success
-                            && svcResult.Services.Count > 0)
-                            break;
-                    }
-                    catch (System.Runtime.InteropServices.COMException ex)
-                        when ((uint)ex.HResult == 0x80070016)
-                    {
-                        LogService.Log($"[BLE:{DeviceName}] ERROR_BAD_COMMAND on Uncached attempt {attempt + 1} — BLE link not ready yet.");
-                        svcResult = null;
-                    }
-                }
-            }
+            //  2. If the cache is cold (first-ever connection), fall back to Uncached
+            //     with retries.  See DiscoverGattServiceAsync for details.
+            var (svcResult, foundInCache) = await DiscoverGattServiceAsync(_device!).ConfigureAwait(false);
 
             if (svcResult is null
                 || svcResult.Status != GattCommunicationStatus.Success
@@ -506,6 +405,89 @@ public sealed class BleService : IDisposable
     }
 
     /// <summary>
+    /// Two-pass GATT service discovery.
+    /// Pass 1: Cached — instant, no BLE ATT communication required.
+    /// Pass 2: Uncached with up to 4 retries, waiting ≥2 s between attempts so
+    ///         the Windows GATT stack (default interval 698–2500 ms) has time to
+    ///         settle.  After each Uncached attempt the cache is re-checked because
+    ///         Windows populates it asynchronously in the background.
+    /// </summary>
+    private async Task<(GattDeviceServicesResult? Result, bool FoundInCache)>
+        DiscoverGattServiceAsync(BluetoothLEDevice device)
+    {
+        // ── Pass 1: Cached ────────────────────────────────────────────────────
+        var cached = await TryGetServiceAsync(device, BluetoothCacheMode.Cached).ConfigureAwait(false);
+        if (cached is not null)
+        {
+            LogService.Log($"[BLE:{DeviceName}] Service found in Windows GATT cache.");
+            return (cached, true);
+        }
+        LogService.Log($"[BLE:{DeviceName}] Cache miss — will try Uncached.");
+
+        // ── Pass 2: Uncached with retries ─────────────────────────────────────
+        const int maxAttempts = 4;
+        for (int attempt = 0; attempt < maxAttempts; attempt++)
+        {
+            if (attempt > 0)
+            {
+                // Windows reports Connected (link layer) before the GATT ATT layer is
+                // ready.  Wait > one full Windows connection interval (up to 2500 ms).
+                int delayMs = 2000 + 500 * (attempt - 1); // 2000, 2500, 3000 ms
+                LogService.Log($"[BLE:{DeviceName}] Uncached retry {attempt + 1}/{maxAttempts} — waiting {delayMs} ms for GATT stack to settle…");
+                await Task.Delay(delayMs).ConfigureAwait(false);
+
+                if (!await WaitForConnectedAsync(device, TimeSpan.FromSeconds(4)).ConfigureAwait(false))
+                {
+                    LogService.Log($"[BLE:{DeviceName}] BLE link lost before retry {attempt + 1} — aborting.");
+                    break;
+                }
+
+                // Windows may have populated the cache during the previous Uncached attempt.
+                var cachedRetry = await TryGetServiceAsync(device, BluetoothCacheMode.Cached).ConfigureAwait(false);
+                if (cachedRetry is not null)
+                {
+                    LogService.Log($"[BLE:{DeviceName}] Service found in GATT cache on retry {attempt + 1}.");
+                    return (cachedRetry, true);
+                }
+            }
+
+            var uncached = await TryGetServiceAsync(device, BluetoothCacheMode.Uncached).ConfigureAwait(false);
+            if (uncached is not null)
+                return (uncached, false);
+
+            LogService.Log($"[BLE:{DeviceName}] ERROR_BAD_COMMAND on Uncached attempt {attempt + 1} — BLE link not ready yet.");
+        }
+
+        return (null, false);
+    }
+
+    /// <summary>
+    /// Single attempt to retrieve the primary GATT service, using the specified cache mode.
+    /// Returns null on ERROR_BAD_COMMAND (0x80070016) or a non-Success status.
+    /// </summary>
+    private async Task<GattDeviceServicesResult?> TryGetServiceAsync(
+        BluetoothLEDevice device, BluetoothCacheMode cacheMode)
+    {
+        try
+        {
+            var result = await device
+                .GetGattServicesForUuidAsync(ServiceUuid, cacheMode)
+                .AsTask()
+                .ConfigureAwait(false);
+
+            return result.Status == GattCommunicationStatus.Success && result.Services.Count > 0
+                ? result
+                : null;
+        }
+        catch (System.Runtime.InteropServices.COMException ex)
+            when ((uint)ex.HResult == 0x80070016)
+        {
+            // ERROR_BAD_COMMAND — Windows GATT stack not ready yet.
+            return null;
+        }
+    }
+
+    /// <summary>
     /// Waits until <paramref name="device"/>'s ConnectionStatus transitions to
     /// <see cref="BluetoothConnectionStatus.Connected"/>, or until the timeout elapses.
     /// Returns <c>true</c> if connected, <c>false</c> if disconnected or timed out.
@@ -517,13 +499,13 @@ public sealed class BleService : IDisposable
 
         var tcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
 
-        void Handler(BluetoothLEDevice d, object _)
+        TypedEventHandler<BluetoothLEDevice, object> handler = (d, _) =>
         {
             if      (d.ConnectionStatus == BluetoothConnectionStatus.Connected)    tcs.TrySetResult(true);
             else if (d.ConnectionStatus == BluetoothConnectionStatus.Disconnected) tcs.TrySetResult(false);
-        }
+        };
 
-        device.ConnectionStatusChanged += Handler;
+        device.ConnectionStatusChanged += handler;
         try
         {
             // Re-check after subscribing to avoid losing an event that fired between
@@ -539,7 +521,7 @@ public sealed class BleService : IDisposable
         }
         finally
         {
-            device.ConnectionStatusChanged -= Handler;
+            device.ConnectionStatusChanged -= handler;
         }
     }
 

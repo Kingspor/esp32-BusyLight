@@ -9,17 +9,12 @@ namespace BusyLight.Services;
 /// </summary>
 public static class LogService
 {
-    private static readonly string LogPath;
+    private static readonly string LogPath =
+        Path.Combine(ConfigurationService.GetConfigDirectory(), "busylight.log");
+
     private static readonly object Lock = new();
 
     private const long MaxFileSizeBytes = 500 * 1024; // 500 KB
-
-    static LogService()
-    {
-        LogPath = Path.Combine(
-            ConfigurationService.GetConfigDirectory(),
-            "busylight.log");
-    }
 
     /// <summary>Absolute path to the log file.</summary>
     public static string LogFilePath => LogPath;
@@ -57,7 +52,11 @@ public static class LogService
                 if (!File.Exists(LogPath))
                     File.WriteAllText(LogPath, "", Encoding.UTF8);
             }
-            catch { }
+            catch
+            {
+                // Intentionally swallowed — if the log directory cannot be created the
+                // OpenLogFile call will fail gracefully when the shell tries to open it.
+            }
         }
 
         System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo

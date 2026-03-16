@@ -243,7 +243,7 @@ public sealed partial class SettingsForm : Form
 
     // ── Menu handlers ─────────────────────────────────────────────────────────
 
-    private void mnuLogOeffnen_Click(object? sender, EventArgs e)
+    private static void mnuLogOeffnen_Click(object? sender, EventArgs e)
         => Services.LogService.OpenLogFile();
 
     private void mnuDokumentation_Click(object? sender, EventArgs e)

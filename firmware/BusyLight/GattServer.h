@@ -3,6 +3,7 @@
 // Only project headers here — all BLE library headers are included in GattServer.cpp.
 // This avoids the Windows case-insensitive filename collision between our
 // GattServer.h and the ESP32 library's BLEServer.h.
+#include <array>
 #include "config.h"
 #include "LedController.h"
 
@@ -44,12 +45,12 @@ private:
     // Bluedroid builds need the remote BD address; NimBLE builds need the
     // 16-bit connection handle.  Both fields are kept (8 bytes total) to
     // avoid including sdkconfig.h / BLE headers in this header file.
-    uint8_t  _remoteBda[6];  // Bluedroid: remote BD address from onConnect
-    uint16_t _connHandle;    // NimBLE:    connection handle from onConnect
-    bool     _connParamUpdatePending;
+    std::array<uint8_t, 6> _remoteBda{};  // Bluedroid: remote BD address from onConnect
+    uint16_t _connHandle              = 0; // NimBLE:    connection handle from onConnect
+    bool     _connParamUpdatePending  = false;
 
     // Reference to the LED controller, set in begin().
-    LedController* _ledController;
+    LedController* _ledController = nullptr;
 
     // Callback class implementations live in GattServer.cpp.
     // Only forward-declared here to keep BLE headers out of this file.
@@ -57,6 +58,6 @@ private:
     class LedCharCallbacks;
 
     // Heap-allocated callback instances (lifetime == BleServer lifetime)
-    ServerCallbacks*  _serverCallbacks;
-    LedCharCallbacks* _ledCharCallbacks;
+    ServerCallbacks*  _serverCallbacks  = nullptr;
+    LedCharCallbacks* _ledCharCallbacks = nullptr;
 };

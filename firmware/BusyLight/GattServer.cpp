@@ -27,7 +27,7 @@ public:
 #if defined(CONFIG_BLUEDROID_ENABLED)
     void onConnect(BLEServer* /*pServer*/, esp_ble_gatts_cb_param_t* param) override {
         _owner._deviceConnected = true;
-        memcpy(_owner._remoteBda, param->connect.remote_bda, sizeof(_owner._remoteBda));
+        memcpy(_owner._remoteBda.data(), param->connect.remote_bda, _owner._remoteBda.size());
         _owner._connParamUpdatePending = true;
     }
 #elif defined(CONFIG_NIMBLE_ENABLED)
@@ -82,13 +82,7 @@ BleServer::BleServer()
       _pTelemetryChar(nullptr),
       _pProtocolVerChar(nullptr),
       _deviceConnected(false),
-      _oldConnected(false),
-      _ledController(nullptr),
-      _serverCallbacks(nullptr),
-      _ledCharCallbacks(nullptr),
-      _remoteBda{},
-      _connHandle(0),
-      _connParamUpdatePending(false)
+      _oldConnected(false)
 {
 }
 

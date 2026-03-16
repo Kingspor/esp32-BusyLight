@@ -15,8 +15,8 @@
     <AssemblyName>BusyLight</AssemblyName>
     <RootNamespace>BusyLight</RootNamespace>
     <!-- Version — overridden by CI via -p:Version=x.y.z -->
-    <Version>0.2.0</Version>
-    <FileVersion>0.2.0</FileVersion>
+    <Version>0.3.0</Version>
+    <FileVersion>0.3.0</FileVersion>
   </PropertyGroup>
 
   <ItemGroup>

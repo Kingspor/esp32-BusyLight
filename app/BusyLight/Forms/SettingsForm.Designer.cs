@@ -21,6 +21,7 @@ partial class SettingsForm
         mnuSchliessen   = new ToolStripMenuItem();
         mnuHilfe        = new ToolStripMenuItem();
         mnuDokumentation = new ToolStripMenuItem();
+        mnuLogOeffnen   = new ToolStripMenuItem();
         tabControl      = new TabControl();
         tabAllgemein    = new TabPage();
         grpAzure        = new GroupBox();
@@ -51,6 +52,7 @@ partial class SettingsForm
         lblBleInfo      = new Label();
         lblBleDevice    = new Label();
         btnRescan       = new Button();
+        btnStopScan     = new Button();
         tabZuordnung    = new TabPage();
         lblZuordnungHint = new Label();
         pnlZuordnung    = new Panel();
@@ -107,7 +109,7 @@ partial class SettingsForm
         mnuSchliessen.Text = "Schließen";
         mnuSchliessen.Click += mnuSchliessen_Click;
 
-        mnuHilfe.DropDownItems.AddRange(new ToolStripItem[] { mnuDokumentation });
+        mnuHilfe.DropDownItems.AddRange(new ToolStripItem[] { mnuDokumentation, mnuLogOeffnen });
         mnuHilfe.Name = "mnuHilfe";
         mnuHilfe.Size = new Size(44, 20);
         mnuHilfe.Text = "Hilfe";
@@ -116,6 +118,11 @@ partial class SettingsForm
         mnuDokumentation.Size = new Size(170, 22);
         mnuDokumentation.Text = "Dokumentation öffnen";
         mnuDokumentation.Click += mnuDokumentation_Click;
+
+        mnuLogOeffnen.Name = "mnuLogOeffnen";
+        mnuLogOeffnen.Size = new Size(170, 22);
+        mnuLogOeffnen.Text = "Log öffnen";
+        mnuLogOeffnen.Click += mnuLogOeffnen_Click;
 
         // tabControl
         tabControl.Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right;
@@ -325,6 +332,7 @@ partial class SettingsForm
         tabBle.Controls.Add(lblBleInfo);
         tabBle.Controls.Add(lblBleDevice);
         tabBle.Controls.Add(btnRescan);
+        tabBle.Controls.Add(btnStopScan);
         tabBle.Location = new Point(4, 24);
         tabBle.Name     = "tabBle";
         tabBle.Size     = new Size(702, 385);
@@ -351,6 +359,13 @@ partial class SettingsForm
         btnRescan.TabIndex = 2;
         btnRescan.Text     = "Neues Gerät suchen…";
         btnRescan.Click   += btnRescan_Click;
+
+        btnStopScan.Location = new Point(214, 68);
+        btnStopScan.Name     = "btnStopScan";
+        btnStopScan.Size     = new Size(180, 28);
+        btnStopScan.TabIndex = 3;
+        btnStopScan.Text     = "Suche unterbrechen";
+        btnStopScan.Enabled  = false;
 
         // tabZuordnung
         tabZuordnung.Controls.Add(lblZuordnungHint);
@@ -454,6 +469,7 @@ partial class SettingsForm
     private System.Windows.Forms.ToolStripMenuItem      mnuSchliessen        = default!;
     private System.Windows.Forms.ToolStripMenuItem      mnuHilfe             = default!;
     private System.Windows.Forms.ToolStripMenuItem      mnuDokumentation     = default!;
+    private System.Windows.Forms.ToolStripMenuItem      mnuLogOeffnen        = default!;
 
     private System.Windows.Forms.TabControl             tabControl           = default!;
     private System.Windows.Forms.TabPage                tabAllgemein         = default!;
@@ -489,6 +505,7 @@ partial class SettingsForm
     private System.Windows.Forms.Label                  lblBleInfo           = default!;
     private System.Windows.Forms.Label                  lblBleDevice         = default!;
     private System.Windows.Forms.Button                 btnRescan            = default!;
+    private System.Windows.Forms.Button                 btnStopScan          = default!;
 
     private System.Windows.Forms.TabPage                tabZuordnung         = default!;
     private System.Windows.Forms.Label                  lblZuordnungHint     = default!;

@@ -2,6 +2,7 @@ using BusyLight.Models;
 using Windows.Devices.Bluetooth;
 using Windows.Devices.Bluetooth.Advertisement;
 using Windows.Devices.Bluetooth.GenericAttributeProfile;
+using Windows.Foundation;
 using Windows.Storage.Streams;
 
 namespace BusyLight.Services;
@@ -85,6 +86,13 @@ public sealed class BleService : IDisposable
     private bool _connected;
     private bool _addressKnown;  // true when DeviceAddress has been set
 
+    /// <summary>
+    /// Set to true after the first connection-failure error is surfaced via
+    /// <see cref="ErrorOccurred"/>.  Reset to false on successful connect or
+    /// disconnect so the next failure will be reported again.
+    /// </summary>
+    private bool _connectDiagnosticRaised;
+
     /// <summary>Prevents concurrent connection attempts.</summary>
     private readonly SemaphoreSlim _connectLock = new(1, 1);
 
@@ -135,6 +143,13 @@ public sealed class BleService : IDisposable
     {
         _cts?.Cancel();
         StopWatcher();
+
+        // Notify UI — without this the status label stays at "Suche…" forever
+        if (!_connected)
+        {
+            CurrentState = BleConnectionState.Disconnected;
+            ConnectionChanged?.Invoke(this, BleConnectionState.Disconnected);
+        }
     }
 
     /// <summary>
@@ -236,7 +251,7 @@ public sealed class BleService : IDisposable
         _watcher.Stopped  += OnWatcherStopped;
         _watcher.Start();
 
-        Debug.WriteLine($"[BLE:{DeviceName}] Watcher started — scanning…");
+        LogService.Log($"[BLE:{DeviceName}] Watcher started — scanning…");
     }
 
     private void StopWatcher()
@@ -283,7 +298,15 @@ public sealed class BleService : IDisposable
         BluetoothLEAdvertisementWatcherStoppedEventArgs args)
     {
         if (_cts is { IsCancellationRequested: false } && !_connected)
-            Debug.WriteLine($"[BLE:{DeviceName}] Watcher stopped unexpectedly: {args.Error}");
+        {
+            LogService.Log($"[BLE:{DeviceName}] Watcher stopped unexpectedly: {args.Error}");
+            if (args.Error != Windows.Devices.Bluetooth.BluetoothError.Success)
+            {
+                ErrorOccurred?.Invoke(this,
+                    $"BLE-Scanner unerwartet beendet ({DeviceName}): {args.Error}. " +
+                    $"Bluetooth aktiviert?");
+            }
+        }
     }
 
     // ── Connection logic ──────────────────────────────────────────────────────
@@ -297,7 +320,7 @@ public sealed class BleService : IDisposable
         {
             if (_connected) return;
 
-            Debug.WriteLine($"[BLE:{DeviceName}] Connecting to {address:X12}…");
+            LogService.Log($"[BLE:{DeviceName}] Connecting to {address:X12}…");
 
             _device = await BluetoothLEDevice.FromBluetoothAddressAsync(address)
                                               .AsTask()
@@ -305,36 +328,52 @@ public sealed class BleService : IDisposable
 
             if (_device is null)
             {
-                Debug.WriteLine($"[BLE:{DeviceName}] FromBluetoothAddressAsync returned null.");
+                LogService.Log($"[BLE:{DeviceName}] FromBluetoothAddressAsync returned null — device not in Windows BLE cache.");
                 ResetAddress();
                 return;
             }
 
             _device.ConnectionStatusChanged += OnConnectionStatusChanged;
 
-            var svcResult = await _device
-                .GetGattServicesForUuidAsync(ServiceUuid, BluetoothCacheMode.Uncached)
-                .AsTask()
-                .ConfigureAwait(false);
+            // Service discovery strategy:
+            //
+            //  1. Try Cached first — Windows stores the GATT structure after the first
+            //     connection and returns it instantly without any ATT communication.
+            //     This bypasses the long initial connection interval entirely.
+            //
+            //  2. If the cache is cold (first-ever connection), fall back to Uncached
+            //     with retries.  See DiscoverGattServiceAsync for details.
+            var (svcResult, foundInCache) = await DiscoverGattServiceAsync(_device!).ConfigureAwait(false);
 
-            if (svcResult.Status != GattCommunicationStatus.Success
+            if (svcResult is null
+                || svcResult.Status != GattCommunicationStatus.Success
                 || svcResult.Services.Count == 0)
             {
-                Debug.WriteLine($"[BLE:{DeviceName}] Service discovery failed: {svcResult.Status}");
+                var status = svcResult?.Status.ToString() ?? "COMException";
+                LogService.Log($"[BLE:{DeviceName}] Service discovery failed (Cached + Uncached): {status}");
+                RaiseDiagnosticError(
+                    $"GATT-Service nicht gefunden auf '{DeviceName}' (Status: {status}). " +
+                    $"Falsche Firmware? Details im Log.");
                 ResetAddress();
                 return;
             }
 
             var service    = svcResult.Services[0];
+            // Use Cached when service was found in cache — avoids requiring an active
+            // connection when Windows already has the full GATT structure locally.
+            var charCacheMode = foundInCache ? BluetoothCacheMode.Cached : BluetoothCacheMode.Uncached;
             var charResult = await service
-                .GetCharacteristicsForUuidAsync(LedCharUuid, BluetoothCacheMode.Uncached)
+                .GetCharacteristicsForUuidAsync(LedCharUuid, charCacheMode)
                 .AsTask()
                 .ConfigureAwait(false);
 
             if (charResult.Status != GattCommunicationStatus.Success
                 || charResult.Characteristics.Count == 0)
             {
-                Debug.WriteLine($"[BLE:{DeviceName}] Characteristic discovery failed: {charResult.Status}");
+                LogService.Log($"[BLE:{DeviceName}] Characteristic discovery failed: {charResult.Status}");
+                RaiseDiagnosticError(
+                    $"LED-Charakteristik nicht gefunden auf '{DeviceName}' (Status: {charResult.Status}). " +
+                    $"Falsche Firmware? Details im Log.");
                 service.Dispose();
                 ResetAddress();
                 return;
@@ -346,16 +385,17 @@ public sealed class BleService : IDisposable
 
             // Read the protocol version characteristic (feda0103-…).
             // Old firmware without this characteristic is treated as version 0 (incompatible).
-            await CheckProtocolVersionAsync(service).ConfigureAwait(false);
+            await CheckProtocolVersionAsync(service, charCacheMode).ConfigureAwait(false);
 
-            Debug.WriteLine($"[BLE:{DeviceName}] Connected.");
+            LogService.Log($"[BLE:{DeviceName}] Connected.");
+            _connectDiagnosticRaised = false;
             CurrentState = BleConnectionState.Connected;
             ConnectionChanged?.Invoke(this, BleConnectionState.Connected);
         }
-        catch (Exception ex) when (ex is not OperationCanceledException)
+        catch (Exception ex)
         {
-            Debug.WriteLine($"[BLE:{DeviceName}] Connect error: {ex.Message}");
-            ErrorOccurred?.Invoke(this, $"BLE connect error ({DeviceName}): {ex.Message}");
+            LogService.Log($"[BLE:{DeviceName}] Connect error: {ex}");
+            ErrorOccurred?.Invoke(this, $"BLE-Verbindungsfehler ({DeviceName}): {ex.Message}");
             ResetAddress();
         }
         finally
@@ -364,10 +404,131 @@ public sealed class BleService : IDisposable
         }
     }
 
-    private async Task CheckProtocolVersionAsync(GattDeviceService service)
+    /// <summary>
+    /// Two-pass GATT service discovery.
+    /// Pass 1: Cached — instant, no BLE ATT communication required.
+    /// Pass 2: Uncached with up to 4 retries, waiting ≥2 s between attempts so
+    ///         the Windows GATT stack (default interval 698–2500 ms) has time to
+    ///         settle.  After each Uncached attempt the cache is re-checked because
+    ///         Windows populates it asynchronously in the background.
+    /// </summary>
+    private async Task<(GattDeviceServicesResult? Result, bool FoundInCache)>
+        DiscoverGattServiceAsync(BluetoothLEDevice device)
+    {
+        // ── Pass 1: Cached ────────────────────────────────────────────────────
+        var cached = await TryGetServiceAsync(device, ServiceUuid, BluetoothCacheMode.Cached).ConfigureAwait(false);
+        if (cached is not null)
+        {
+            LogService.Log($"[BLE:{DeviceName}] Service found in Windows GATT cache.");
+            return (cached, true);
+        }
+        LogService.Log($"[BLE:{DeviceName}] Cache miss — will try Uncached.");
+
+        // ── Pass 2: Uncached with retries ─────────────────────────────────────
+        const int maxAttempts = 4;
+        for (int attempt = 0; attempt < maxAttempts; attempt++)
+        {
+            if (attempt > 0)
+            {
+                // Windows reports Connected (link layer) before the GATT ATT layer is
+                // ready.  Wait > one full Windows connection interval (up to 2500 ms).
+                int delayMs = 2000 + 500 * (attempt - 1); // 2000, 2500, 3000 ms
+                LogService.Log($"[BLE:{DeviceName}] Uncached retry {attempt + 1}/{maxAttempts} — waiting {delayMs} ms for GATT stack to settle…");
+                await Task.Delay(delayMs).ConfigureAwait(false);
+
+                if (!await WaitForConnectedAsync(device, TimeSpan.FromSeconds(4)).ConfigureAwait(false))
+                {
+                    LogService.Log($"[BLE:{DeviceName}] BLE link lost before retry {attempt + 1} — aborting.");
+                    break;
+                }
+
+                // Windows may have populated the cache during the previous Uncached attempt.
+                var cachedRetry = await TryGetServiceAsync(device, ServiceUuid, BluetoothCacheMode.Cached).ConfigureAwait(false);
+                if (cachedRetry is not null)
+                {
+                    LogService.Log($"[BLE:{DeviceName}] Service found in GATT cache on retry {attempt + 1}.");
+                    return (cachedRetry, true);
+                }
+            }
+
+            var uncached = await TryGetServiceAsync(device, ServiceUuid, BluetoothCacheMode.Uncached).ConfigureAwait(false);
+            if (uncached is not null)
+                return (uncached, false);
+
+            LogService.Log($"[BLE:{DeviceName}] ERROR_BAD_COMMAND on Uncached attempt {attempt + 1} — BLE link not ready yet.");
+        }
+
+        return (null, false);
+    }
+
+    /// <summary>
+    /// Single attempt to retrieve a GATT service by UUID, using the specified cache mode.
+    /// Returns null on ERROR_BAD_COMMAND (0x80070016) or a non-Success status.
+    /// </summary>
+    private static async Task<GattDeviceServicesResult?> TryGetServiceAsync(
+        BluetoothLEDevice device, Guid serviceUuid, BluetoothCacheMode cacheMode)
+    {
+        try
+        {
+            var result = await device
+                .GetGattServicesForUuidAsync(serviceUuid, cacheMode)
+                .AsTask()
+                .ConfigureAwait(false);
+
+            return result.Status == GattCommunicationStatus.Success && result.Services.Count > 0
+                ? result
+                : null;
+        }
+        catch (System.Runtime.InteropServices.COMException ex)
+            when ((uint)ex.HResult == 0x80070016)
+        {
+            // ERROR_BAD_COMMAND — Windows GATT stack not ready yet.
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Waits until <paramref name="device"/>'s ConnectionStatus transitions to
+    /// <see cref="BluetoothConnectionStatus.Connected"/>, or until the timeout elapses.
+    /// Returns <c>true</c> if connected, <c>false</c> if disconnected or timed out.
+    /// </summary>
+    private static async Task<bool> WaitForConnectedAsync(BluetoothLEDevice device, TimeSpan timeout)
+    {
+        if (device.ConnectionStatus == BluetoothConnectionStatus.Connected)
+            return true;
+
+        var tcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        TypedEventHandler<BluetoothLEDevice, object> handler = (d, _) =>
+        {
+            if      (d.ConnectionStatus == BluetoothConnectionStatus.Connected)    tcs.TrySetResult(true);
+            else if (d.ConnectionStatus == BluetoothConnectionStatus.Disconnected) tcs.TrySetResult(false);
+        };
+
+        device.ConnectionStatusChanged += handler;
+        try
+        {
+            // Re-check after subscribing to avoid losing an event that fired between
+            // the first check and the subscribe.
+            if (device.ConnectionStatus == BluetoothConnectionStatus.Connected) return true;
+            if (device.ConnectionStatus == BluetoothConnectionStatus.Disconnected) return false;
+
+            return await tcs.Task.WaitAsync(timeout).ConfigureAwait(false);
+        }
+        catch (TimeoutException)
+        {
+            return false;
+        }
+        finally
+        {
+            device.ConnectionStatusChanged -= handler;
+        }
+    }
+
+    private async Task CheckProtocolVersionAsync(GattDeviceService service, BluetoothCacheMode cacheMode)
     {
         var verResult = await service
-            .GetCharacteristicsForUuidAsync(ProtocolVerCharUuid, BluetoothCacheMode.Uncached)
+            .GetCharacteristicsForUuidAsync(ProtocolVerCharUuid, cacheMode)
             .AsTask()
             .ConfigureAwait(false);
 
@@ -382,13 +543,13 @@ public sealed class BleService : IDisposable
         }
 
         var readResult = await verResult.Characteristics[0]
-            .ReadValueAsync(BluetoothCacheMode.Uncached)
+            .ReadValueAsync(cacheMode)
             .AsTask()
             .ConfigureAwait(false);
 
         if (readResult.Status != GattCommunicationStatus.Success)
         {
-            Debug.WriteLine($"[BLE:{DeviceName}] Could not read protocol version: {readResult.Status}");
+            LogService.Log($"[BLE:{DeviceName}] Could not read protocol version: {readResult.Status}");
             return;
         }
 
@@ -396,7 +557,7 @@ public sealed class BleService : IDisposable
         byte firmwareVersion = reader.ReadByte();
         FirmwareProtocolVersion = firmwareVersion;
 
-        Debug.WriteLine($"[BLE:{DeviceName}] Protocol version: firmware={firmwareVersion}, expected={ExpectedProtocolVersion}");
+        LogService.Log($"[BLE:{DeviceName}] Protocol version: firmware={firmwareVersion}, expected={ExpectedProtocolVersion}");
 
         if (firmwareVersion != ExpectedProtocolVersion)
         {
@@ -411,7 +572,7 @@ public sealed class BleService : IDisposable
     {
         if (sender.ConnectionStatus == BluetoothConnectionStatus.Disconnected)
         {
-            Debug.WriteLine($"[BLE:{DeviceName}] Device disconnected.");
+            LogService.Log($"[BLE:{DeviceName}] Device disconnected.");
             HandleDisconnect();
         }
     }
@@ -420,9 +581,10 @@ public sealed class BleService : IDisposable
     {
         if (!_connected) return;
 
-        _connected              = false;
-        _ledChar                = null;
-        FirmwareProtocolVersion = null;
+        _connected               = false;
+        _ledChar                 = null;
+        FirmwareProtocolVersion  = null;
+        _connectDiagnosticRaised = false;
         _device?.Dispose();
         _device = null;
 
@@ -435,6 +597,17 @@ public sealed class BleService : IDisposable
     }
 
     /// <summary>
+    /// Raise <see cref="ErrorOccurred"/> with a diagnostic message, but only
+    /// once per connection attempt to avoid balloon-tip spam on repeated retries.
+    /// </summary>
+    private void RaiseDiagnosticError(string message)
+    {
+        if (_connectDiagnosticRaised) return;
+        _connectDiagnosticRaised = true;
+        ErrorOccurred?.Invoke(this, message);
+    }
+
+    /// <summary>
     /// Clear transient address state after a failed connect attempt so the
     /// watcher can find the device again (both discovery and known-address modes).
     /// </summary>
@@ -442,8 +615,12 @@ public sealed class BleService : IDisposable
     {
         _ledChar   = null;
         _connected = false;
-        _device?.Dispose();
-        _device = null;
+        if (_device is not null)
+        {
+            _device.ConnectionStatusChanged -= OnConnectionStatusChanged;
+            _device.Dispose();
+            _device = null;
+        }
         _addressKnown = false;
     }
 
@@ -459,7 +636,11 @@ public sealed class BleService : IDisposable
             {
                 if (_connected) continue;
 
-                if (_watcher is null)
+                // Only restart the watcher when no connection attempt is in progress.
+                // _addressKnown is true between "advertisement received" and
+                // "ConnectAsync completed or failed", so we skip the restart
+                // during that window to avoid a second watcher interfering.
+                if (_watcher is null && !_addressKnown)
                 {
                     // Resume scanning — fire Searching so the UI updates
                     CurrentState = BleConnectionState.Searching;

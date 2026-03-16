@@ -85,9 +85,9 @@ public sealed class TrayApplication : ApplicationContext
             {
                 InvokeOnUiThread(() =>
                 {
-                    _notifyIcon.ShowBalloonTip(6000, "BusyLight — Setup required",
-                        $"Please fill in ClientId and TenantId in:\n" +
-                        $"{ConfigurationService.GetConfigDirectory()}\\appsettings.json",
+                    _notifyIcon.ShowBalloonTip(6000, "BusyLight \u2014 Setup erforderlich",
+                        "Bitte ClientId und TenantId in den Einstellungen eintragen " +
+                        "(Doppelklick auf das Tray-Icon, Tab \"Allgemein\", Gruppe Azure AD).",
                         ToolTipIcon.Warning);
                 });
             }
@@ -113,7 +113,7 @@ public sealed class TrayApplication : ApplicationContext
                 {
                     _settings.BleDevice = picked;
                     await _configService.SaveAsync(_settings).ConfigureAwait(false);
-                    Debug.WriteLine($"[TrayApp] Device selected: {picked.Name} ({picked.Address})");
+                    Services.LogService.Log($"[TrayApp] Device selected: {picked.Name} ({picked.Address})");
                 }
             }
 
@@ -450,6 +450,12 @@ public sealed class TrayApplication : ApplicationContext
                     ApplyOverride(key);
             };
 
+            // Stop scan button in BLE tab
+            _settingsForm.StopScanRequested += (_, _) =>
+            {
+                _bleService?.Stop();
+                Services.LogService.Log("[TrayApp] BLE scan stopped by user.");
+            };
         }
 
         // Sync override UI every time the window is opened
@@ -528,10 +534,10 @@ public sealed class TrayApplication : ApplicationContext
 
     private void ShowError(string message)
     {
-        Debug.WriteLine($"[TrayApp] Error: {message}");
+        Services.LogService.Log($"[TrayApp] Error: {message}");
         InvokeOnUiThread(() =>
         {
-            _notifyIcon.ShowBalloonTip(5000, "BusyLight — Error", message, ToolTipIcon.Error);
+            _notifyIcon.ShowBalloonTip(5000, "BusyLight — Fehler", message, ToolTipIcon.Error);
         });
     }
 

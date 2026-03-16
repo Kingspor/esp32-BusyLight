@@ -5,15 +5,7 @@
 // ============================================================
 
 LedController::LedController()
-    : _pixels(LED_COUNT, LED_PIN, NEO_GRB + NEO_KHZ800),
-      _cmd{0, 0, 0, 0, MODE_STATIC, 0},
-      _animPos(0),
-      _blinkState(false),
-      _blinkLastTime(0),
-      _pulseBrightness(0),
-      _pulseIncreasing(true),
-      _pulseLastTime(0),
-      _stepLastTime(0)
+    : _pixels(LED_COUNT, LED_PIN, NEO_GRB + NEO_KHZ800)
 {
 }
 
@@ -169,7 +161,7 @@ void LedController::_applyRainbow() {
         _animPos = (_animPos + 1) & 0xFF;  // wrap 0–255
 
         for (int i = 0; i < LED_COUNT; i++) {
-            uint8_t hue = static_cast<uint8_t>((i * 256 / LED_COUNT + _animPos) & 0xFF);
+            auto hue = static_cast<uint8_t>((i * 256 / LED_COUNT + _animPos) & 0xFF);
             _pixels.setPixelColor(i, _wheel(hue));
         }
         _show();
@@ -202,10 +194,14 @@ void LedController::_applyBlink() {
 
 // ─── Mode 5: Fill ──────────────────────────────────────────
 // LED0 (center) stays lit at all times.
-// LED1–6 fill one-by-one (6 steps), then empty one-by-one (6 steps), looping.
-// _animPos cycles 0–11:
-//   0–5  (fill phase):  light LED1 .. LED(_animPos+1)   → 1 to 6 LEDs lit
-//   6–11 (empty phase): light LED1 .. LED(11-_animPos)  → 5 down to 0 LEDs lit
+// A lit block sweeps through the ring (LED1–6) like a wipe:
+//   Fill phase  (pos 0–6):  right edge advances  → block grows  from left
+//   Empty phase (pos 7–11): left  edge advances  → block shrinks from left
+// _animPos cycles 0–11 (12 steps):
+//   head = min(pos, 6)      — rightmost lit LED index (1-based)
+//   tail = max(pos - 6, 0)  — first lit LED index minus 1
+//   LEDs tail+1 .. head are lit, all others off
+// Example: pos=7 → head=6, tail=1 → LEDs 2–6 lit (○●●●●●)
 // INTERVAL = map(speed, 0, 255, 500, 20) ms.
 
 void LedController::_applyFill() {
@@ -220,10 +216,11 @@ void LedController::_applyFill() {
         // LED0 (center) always on
         _pixels.setPixelColor(0, _pixels.Color(_cmd.r, _cmd.g, _cmd.b));
 
-        // Number of ring LEDs to light
-        int litCount = (_animPos < 6) ? (_animPos + 1) : (11 - _animPos);
+        // Sliding window: grow right edge first, then advance left edge
+        int head = (_animPos < 6) ? _animPos : 6;
+        int tail = (_animPos > 6) ? (_animPos - 6) : 0;
 
-        for (int i = 1; i <= litCount; i++) {
+        for (int i = tail + 1; i <= head; i++) {
             _pixels.setPixelColor(i, _pixels.Color(_cmd.r, _cmd.g, _cmd.b));
         }
 

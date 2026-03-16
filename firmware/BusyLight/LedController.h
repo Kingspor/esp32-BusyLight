@@ -34,22 +34,22 @@ public:
 
 private:
     Adafruit_NeoPixel _pixels;
-    LedCommand        _cmd;
+    LedCommand        _cmd{0, 0, 0, 0, MODE_STATIC, 0};
 
     // Animation position used by Chase and Rainbow modes
-    int           _animPos;
+    int           _animPos      = 0;
 
     // Blink mode state
-    bool          _blinkState;
-    unsigned long _blinkLastTime;
+    bool          _blinkState    = false;
+    unsigned long _blinkLastTime = 0;
 
     // Pulse mode state
-    uint8_t       _pulseBrightness;
-    bool          _pulseIncreasing;
-    unsigned long _pulseLastTime;
+    uint8_t       _pulseBrightness = 0;
+    bool          _pulseIncreasing = true;
+    unsigned long _pulseLastTime   = 0;
 
     // General-purpose timestamp for Chase / Rainbow step timing
-    unsigned long _stepLastTime;
+    unsigned long _stepLastTime = 0;
 
     // Return the brightness value capped at BRIGHTNESS_CAP_FACTOR.
     uint8_t _cappedBrightness() const;

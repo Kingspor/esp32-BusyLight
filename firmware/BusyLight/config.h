@@ -13,9 +13,22 @@
 // Device name is generated at runtime from the BLE MAC address:
 // "BusyLight-XXYY" where XX:YY = last two bytes of the BLE address (see GattServer.cpp)
 
-// Advertising interval in units of 0.625 ms (1600 * 0.625 ms = 1000 ms)
-#define BLE_ADV_INTERVAL_MIN  1600
-#define BLE_ADV_INTERVAL_MAX  1600
+// Advertising interval in units of 0.625 ms (160 * 0.625 ms = 100 ms)
+// 100 ms is a good balance between discovery speed and power use.
+// The old value of 1600 (1 s) made Windows treat the device as non-interactive
+// and choose a very long connection interval (up to 2.5 s).
+#define BLE_ADV_INTERVAL_MIN  160
+#define BLE_ADV_INTERVAL_MAX  160
+
+// Connection interval requested by the peripheral after the central connects,
+// using L2CAP Connection Parameter Update.  Units: 1.25 ms.
+// Windows defaults to 698–2500 ms for BLE peripherals, which causes
+// GetGattServicesForUuidAsync to fail with ERROR_BAD_COMMAND (0x80070016).
+// 20–45 ms is a standard interactive BLE interval.
+#define BLE_CONN_INTERVAL_MIN  0x10   //  20 ms (0x10 * 1.25 ms)
+#define BLE_CONN_INTERVAL_MAX  0x24   //  45 ms (0x24 * 1.25 ms)
+#define BLE_CONN_LATENCY       0      //  no peripheral latency
+#define BLE_CONN_TIMEOUT       400    //  4 s supervision timeout (units of 10 ms)
 
 // BLE service and characteristic UUIDs
 #define SERVICE_UUID          "feda0100-51a7-4fb7-a27b-c720bef16ef7"

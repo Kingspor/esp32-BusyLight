@@ -39,6 +39,15 @@ private:
     volatile bool _deviceConnected;
     bool          _oldConnected;
 
+    // State for the deferred connection-parameter update (sent one tick after
+    // onConnect so the BLE stack has fully settled).
+    // Bluedroid builds need the remote BD address; NimBLE builds need the
+    // 16-bit connection handle.  Both fields are kept (8 bytes total) to
+    // avoid including sdkconfig.h / BLE headers in this header file.
+    uint8_t  _remoteBda[6];  // Bluedroid: remote BD address from onConnect
+    uint16_t _connHandle;    // NimBLE:    connection handle from onConnect
+    bool     _connParamUpdatePending;
+
     // Reference to the LED controller, set in begin().
     LedController* _ledController;
 

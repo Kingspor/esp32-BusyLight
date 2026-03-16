@@ -8,6 +8,7 @@
 #include <BLEServer.h>
 #include <BLEUtils.h>
 #include <BLE2902.h>
+// esp_gap_ble_api.h is already pulled in transitively by BLEDevice.h / BLEAdvertising.h
 
 // ============================================================
 // Callback class definitions
@@ -19,9 +20,23 @@ class BleServer::ServerCallbacks : public BLEServerCallbacks {
 public:
     explicit ServerCallbacks(BleServer& owner) : _owner(owner) {}
 
-    void onConnect(BLEServer* /*pServer*/) override {
+    // Two-parameter onConnect: captures the addressing info so update() can
+    // call BLEServer::updateConnParams() on the next tick.
+    // Arduino-ESP32 v3.x supports both Bluedroid (esp_bd_addr_t / gatts param)
+    // and NimBLE (conn_handle / ble_gap_conn_desc), selected at compile time.
+#if defined(CONFIG_BLUEDROID_ENABLED)
+    void onConnect(BLEServer* /*pServer*/, esp_ble_gatts_cb_param_t* param) override {
         _owner._deviceConnected = true;
+        memcpy(_owner._remoteBda, param->connect.remote_bda, sizeof(_owner._remoteBda));
+        _owner._connParamUpdatePending = true;
     }
+#elif defined(CONFIG_NIMBLE_ENABLED)
+    void onConnect(BLEServer* /*pServer*/, ble_gap_conn_desc* desc) override {
+        _owner._deviceConnected = true;
+        _owner._connHandle = desc->conn_handle;
+        _owner._connParamUpdatePending = true;
+    }
+#endif
 
     void onDisconnect(BLEServer* /*pServer*/) override {
         _owner._deviceConnected = false;
@@ -70,7 +85,10 @@ BleServer::BleServer()
       _oldConnected(false),
       _ledController(nullptr),
       _serverCallbacks(nullptr),
-      _ledCharCallbacks(nullptr)
+      _ledCharCallbacks(nullptr),
+      _remoteBda{},
+      _connHandle(0),
+      _connParamUpdatePending(false)
 {
 }
 
@@ -166,6 +184,26 @@ void BleServer::update() {
     }
 
     _oldConnected = _deviceConnected;
+
+    // Request a short connection interval so the Windows GATT stack can
+    // complete service discovery without timing out.  Windows defaults to
+    // 698–2500 ms which triggers ERROR_BAD_COMMAND (0x80070016) on the app side.
+    // We send this one tick after onConnect so the BLE stack has settled.
+    if (_connParamUpdatePending) {
+        _connParamUpdatePending = false;
+#if defined(CONFIG_BLUEDROID_ENABLED)
+        _pServer->updateConnParams(_remoteBda,
+            BLE_CONN_INTERVAL_MIN, BLE_CONN_INTERVAL_MAX,
+            BLE_CONN_LATENCY, BLE_CONN_TIMEOUT);
+#elif defined(CONFIG_NIMBLE_ENABLED)
+        _pServer->updateConnParams(_connHandle,
+            BLE_CONN_INTERVAL_MIN, BLE_CONN_INTERVAL_MAX,
+            BLE_CONN_LATENCY, BLE_CONN_TIMEOUT);
+#endif
+        Serial.printf("[BLE] Requested conn interval %u-%u ms\n",
+                      (unsigned)(BLE_CONN_INTERVAL_MIN * 5 / 4),
+                      (unsigned)(BLE_CONN_INTERVAL_MAX * 5 / 4));
+    }
 }
 
 // ============================================================

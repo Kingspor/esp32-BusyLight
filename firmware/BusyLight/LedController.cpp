@@ -5,15 +5,7 @@
 // ============================================================
 
 LedController::LedController()
-    : _pixels(LED_COUNT, LED_PIN, NEO_GRB + NEO_KHZ800),
-      _cmd{0, 0, 0, 0, MODE_STATIC, 0},
-      _animPos(0),
-      _blinkState(false),
-      _blinkLastTime(0),
-      _pulseBrightness(0),
-      _pulseIncreasing(true),
-      _pulseLastTime(0),
-      _stepLastTime(0)
+    : _pixels(LED_COUNT, LED_PIN, NEO_GRB + NEO_KHZ800)
 {
 }
 
@@ -169,7 +161,7 @@ void LedController::_applyRainbow() {
         _animPos = (_animPos + 1) & 0xFF;  // wrap 0–255
 
         for (int i = 0; i < LED_COUNT; i++) {
-            uint8_t hue = static_cast<uint8_t>((i * 256 / LED_COUNT + _animPos) & 0xFF);
+            auto hue = static_cast<uint8_t>((i * 256 / LED_COUNT + _animPos) & 0xFF);
             _pixels.setPixelColor(i, _wheel(hue));
         }
         _show();

@@ -37,8 +37,8 @@ private:
 
     // Tracks the connection state across two consecutive loop() calls
     // so advertising can be restarted after a disconnect.
-    volatile bool _deviceConnected;
-    bool          _oldConnected;
+    volatile bool _deviceConnected = false;
+    bool          _oldConnected    = false;
 
     // State for the deferred connection-parameter update (sent one tick after
     // onConnect so the BLE stack has fully settled).

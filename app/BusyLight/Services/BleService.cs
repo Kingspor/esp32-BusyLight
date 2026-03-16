@@ -416,7 +416,7 @@ public sealed class BleService : IDisposable
         DiscoverGattServiceAsync(BluetoothLEDevice device)
     {
         // ── Pass 1: Cached ────────────────────────────────────────────────────
-        var cached = await TryGetServiceAsync(device, BluetoothCacheMode.Cached).ConfigureAwait(false);
+        var cached = await TryGetServiceAsync(device, ServiceUuid, BluetoothCacheMode.Cached).ConfigureAwait(false);
         if (cached is not null)
         {
             LogService.Log($"[BLE:{DeviceName}] Service found in Windows GATT cache.");
@@ -443,7 +443,7 @@ public sealed class BleService : IDisposable
                 }
 
                 // Windows may have populated the cache during the previous Uncached attempt.
-                var cachedRetry = await TryGetServiceAsync(device, BluetoothCacheMode.Cached).ConfigureAwait(false);
+                var cachedRetry = await TryGetServiceAsync(device, ServiceUuid, BluetoothCacheMode.Cached).ConfigureAwait(false);
                 if (cachedRetry is not null)
                 {
                     LogService.Log($"[BLE:{DeviceName}] Service found in GATT cache on retry {attempt + 1}.");
@@ -451,7 +451,7 @@ public sealed class BleService : IDisposable
                 }
             }
 
-            var uncached = await TryGetServiceAsync(device, BluetoothCacheMode.Uncached).ConfigureAwait(false);
+            var uncached = await TryGetServiceAsync(device, ServiceUuid, BluetoothCacheMode.Uncached).ConfigureAwait(false);
             if (uncached is not null)
                 return (uncached, false);
 
@@ -462,16 +462,16 @@ public sealed class BleService : IDisposable
     }
 
     /// <summary>
-    /// Single attempt to retrieve the primary GATT service, using the specified cache mode.
+    /// Single attempt to retrieve a GATT service by UUID, using the specified cache mode.
     /// Returns null on ERROR_BAD_COMMAND (0x80070016) or a non-Success status.
     /// </summary>
-    private async Task<GattDeviceServicesResult?> TryGetServiceAsync(
-        BluetoothLEDevice device, BluetoothCacheMode cacheMode)
+    private static async Task<GattDeviceServicesResult?> TryGetServiceAsync(
+        BluetoothLEDevice device, Guid serviceUuid, BluetoothCacheMode cacheMode)
     {
         try
         {
             var result = await device
-                .GetGattServicesForUuidAsync(ServiceUuid, cacheMode)
+                .GetGattServicesForUuidAsync(serviceUuid, cacheMode)
                 .AsTask()
                 .ConfigureAwait(false);
 

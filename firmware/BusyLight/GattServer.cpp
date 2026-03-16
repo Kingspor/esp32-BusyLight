@@ -80,9 +80,7 @@ BleServer::BleServer()
     : _pServer(nullptr),
       _pLedChar(nullptr),
       _pTelemetryChar(nullptr),
-      _pProtocolVerChar(nullptr),
-      _deviceConnected(false),
-      _oldConnected(false)
+      _pProtocolVerChar(nullptr)
 {
 }
 

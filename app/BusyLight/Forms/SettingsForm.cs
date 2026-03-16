@@ -63,6 +63,9 @@ public sealed partial class SettingsForm : Form
     /// <summary>Raised when the user selects a manual override. Arg is the presence key, or null to clear.</summary>
     public event EventHandler<string?>? OverrideRequested;
 
+    /// <summary>Raised when the user clicks "Suche unterbrechen" to stop the BLE scan.</summary>
+    public event EventHandler? StopScanRequested;
+
     // ── Animation mode names (index = Mode byte) ──────────────────────────────
 
     private static readonly string[] ModeNames =
@@ -106,17 +109,22 @@ public sealed partial class SettingsForm : Form
                 LivePreviewCommand?.Invoke(this, LedCommand.Off);
         };
 
-        // Mask sensitive IDs: full value on focus, masked on blur
-        txtClientId.GotFocus  += (_, _) => txtClientId.Text = _clientIdFull;
+        // Mask sensitive IDs: clear on focus (never reveal stored value),
+        // capture typed value on blur only if the user actually entered something.
+        txtClientId.GotFocus  += (_, _) => txtClientId.Text = "";
         txtClientId.LostFocus += (_, _) =>
         {
-            _clientIdFull    = txtClientId.Text.Trim();
+            var typed = txtClientId.Text.Trim();
+            if (!string.IsNullOrEmpty(typed))
+                _clientIdFull = typed;
             txtClientId.Text = MaskId(_clientIdFull);
         };
-        txtTenantId.GotFocus  += (_, _) => txtTenantId.Text = _tenantIdFull;
+        txtTenantId.GotFocus  += (_, _) => txtTenantId.Text = "";
         txtTenantId.LostFocus += (_, _) =>
         {
-            _tenantIdFull    = txtTenantId.Text.Trim();
+            var typed = txtTenantId.Text.Trim();
+            if (!string.IsNullOrEmpty(typed))
+                _tenantIdFull = typed;
             txtTenantId.Text = MaskId(_tenantIdFull);
         };
 
@@ -131,6 +139,9 @@ public sealed partial class SettingsForm : Form
         nudBrightnessCap.ValueChanged += (_, _) => MarkDirty();
         txtClientId.TextChanged       += (_, _) => MarkDirty();
         txtTenantId.TextChanged       += (_, _) => MarkDirty();
+
+        // BLE tab buttons
+        btnStopScan.Click += (_, _) => StopScanRequested?.Invoke(this, EventArgs.Empty);
 
         // Präsenz tab toolbar
         btnFetchNow.Click += (_, _) => FetchNowRequested?.Invoke(this, EventArgs.Empty);
@@ -182,6 +193,9 @@ public sealed partial class SettingsForm : Form
         lblBleDevice.Text = string.IsNullOrEmpty(addr)
             ? $"{deviceName}  —  {stateText}"
             : $"{deviceName}  ({addr})  —  {stateText}";
+
+        // Enable "Suche unterbrechen" only while actively scanning
+        btnStopScan.Enabled = state == BleConnectionState.Searching;
     }
 
     /// <summary>
@@ -214,13 +228,23 @@ public sealed partial class SettingsForm : Form
     // ── ToDo 1 helper ─────────────────────────────────────────────────────────
 
     /// <summary>
-    /// Show only the first 7 characters of an ID, followed by "****".
-    /// Empty or short strings are returned as-is.
+    /// Replace every character of an ID with '*' so no part of the value leaks
+    /// through the UI.  Only shown while the user has focus on the field.
     /// </summary>
     private static string MaskId(string value)
-        => value.Length > 7 ? value[..7] + "****" : value;
+        => value.Length > 0 ? new string('*', value.Length) : value;
+
+    /// <summary>Re-apply masking to both ID fields (unless the field has focus).</summary>
+    private void MaskIdFields()
+    {
+        if (!txtClientId.Focused) txtClientId.Text = MaskId(_clientIdFull);
+        if (!txtTenantId.Focused) txtTenantId.Text = MaskId(_tenantIdFull);
+    }
 
     // ── Menu handlers ─────────────────────────────────────────────────────────
+
+    private void mnuLogOeffnen_Click(object? sender, EventArgs e)
+        => Services.LogService.OpenLogFile();
 
     private void mnuDokumentation_Click(object? sender, EventArgs e)
     {
@@ -275,6 +299,7 @@ public sealed partial class SettingsForm : Form
                 Invoke(() =>
                 {
                     ClearDirty();
+                    MaskIdFields();
                     SettingsSaved?.Invoke(this, _settings);
                     MessageBox.Show(this, "Einstellungen gespeichert.",
                         "Gespeichert", MessageBoxButtons.OK, MessageBoxIcon.Information);

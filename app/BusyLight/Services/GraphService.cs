@@ -156,13 +156,13 @@ public sealed class GraphService : IDisposable
             {
                 _lastPresence = availability;
                 PresenceChanged?.Invoke(this, availability);
-                Debug.WriteLine($"[Graph] Presence changed → {availability}");
+                LogService.Log($"[Graph] Presence changed: {availability}");
             }
         }
         catch (ODataError ex)
         {
             string msg = $"Graph API error: {ex.Error?.Message ?? ex.Message}";
-            Debug.WriteLine($"[Graph] {msg}");
+            LogService.Log($"[Graph] {msg}");
             ErrorOccurred?.Invoke(this, msg);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
@@ -185,6 +185,20 @@ public sealed class GraphService : IDisposable
 
     // ── MSAL token acquisition ────────────────────────────────────────────────
 
+    internal static readonly SystemWebViewOptions WebViewOptions = new()
+    {
+        HtmlMessageSuccess =
+            "<html><body style=\"font-family:sans-serif;text-align:center;padding:40px\">" +
+            "<h2 style=\"color:#107c10\">&#10003; Anmeldung erfolgreich</h2>" +
+            "<p>Du kannst dieses Browser-Fenster jetzt schlie&szlig;en.</p>" +
+            "</body></html>",
+        HtmlMessageError =
+            "<html><body style=\"font-family:sans-serif;text-align:center;padding:40px\">" +
+            "<h2 style=\"color:#c4272f\">&#10007; Anmeldung fehlgeschlagen</h2>" +
+            "<p>{0}</p><p><small>{1}</small></p>" +
+            "</body></html>",
+    };
+
     private async Task AcquireTokenAsync()
     {
         var accounts = await _msalClient!.GetAccountsAsync().ConfigureAwait(false);
@@ -196,18 +210,19 @@ public sealed class GraphService : IDisposable
                 .ExecuteAsync()
                 .ConfigureAwait(false);
 
-            Debug.WriteLine("[Auth] Token acquired silently.");
+            LogService.Log("[Auth] Token acquired silently.");
         }
         catch (MsalUiRequiredException)
         {
-            Debug.WriteLine("[Auth] Silent acquisition failed — launching interactive flow.");
+            LogService.Log("[Auth] Silent acquisition failed — launching interactive flow.");
 
             await _msalClient
                 .AcquireTokenInteractive(Scopes)
+                .WithSystemWebViewOptions(WebViewOptions)
                 .ExecuteAsync()
                 .ConfigureAwait(false);
 
-            Debug.WriteLine("[Auth] Interactive authentication succeeded.");
+            LogService.Log("[Auth] Interactive authentication succeeded.");
         }
     }
 
@@ -265,6 +280,7 @@ public sealed class GraphService : IDisposable
             {
                 result = await _app
                     .AcquireTokenInteractive(_scopes)
+                    .WithSystemWebViewOptions(GraphService.WebViewOptions)
                     .ExecuteAsync(cancellationToken)
                     .ConfigureAwait(false);
             }

@@ -76,13 +76,7 @@ private:
 // Constructor
 // ============================================================
 
-BleServer::BleServer()
-    : _pServer(nullptr),
-      _pLedChar(nullptr),
-      _pTelemetryChar(nullptr),
-      _pProtocolVerChar(nullptr)
-{
-}
+BleServer::BleServer() = default;
 
 // ============================================================
 // Initialisation

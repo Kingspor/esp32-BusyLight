@@ -30,10 +30,10 @@ public:
     bool isConnected() const;
 
 private:
-    BLEServer*         _pServer;
-    BLECharacteristic* _pLedChar;
-    BLECharacteristic* _pTelemetryChar;
-    BLECharacteristic* _pProtocolVerChar;
+    BLEServer*         _pServer          = nullptr;
+    BLECharacteristic* _pLedChar         = nullptr;
+    BLECharacteristic* _pTelemetryChar   = nullptr;
+    BLECharacteristic* _pProtocolVerChar = nullptr;
 
     // Tracks the connection state across two consecutive loop() calls
     // so advertising can be restarted after a disconnect.

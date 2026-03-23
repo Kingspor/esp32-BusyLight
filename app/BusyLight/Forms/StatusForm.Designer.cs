@@ -19,6 +19,7 @@ partial class StatusForm
         pnlDevices       = new FlowLayoutPanel();
         lblPresence      = new Label();
         lblPresenceValue = new Label();
+        lblBattery       = new Label();
         btnSettings      = new System.Windows.Forms.Button();
 
         SuspendLayout();
@@ -45,19 +46,24 @@ partial class StatusForm
         lblPresenceValue.Location = new System.Drawing.Point(100, 122);
         lblPresenceValue.Text     = "—";
 
+        // lblBattery
+        lblBattery.AutoSize = true;
+        lblBattery.Location = new System.Drawing.Point(12, 144);
+        lblBattery.Text     = "Akku: —";
+
         // btnSettings
         btnSettings.Text     = "⚙ Einstellungen";
-        btnSettings.Location = new System.Drawing.Point(12, 150);
+        btnSettings.Location = new System.Drawing.Point(12, 172);
         btnSettings.Size     = new System.Drawing.Size(130, 26);
         btnSettings.Click   += btnSettings_Click;
 
         // Form
         AutoScaleDimensions = new System.Drawing.SizeF(7F, 15F);
         AutoScaleMode       = AutoScaleMode.Font;
-        ClientSize          = new System.Drawing.Size(400, 188);
+        ClientSize          = new System.Drawing.Size(400, 210);
         Controls.AddRange(new System.Windows.Forms.Control[]
         {
-            lblDevices, pnlDevices, lblPresence, lblPresenceValue, btnSettings
+            lblDevices, pnlDevices, lblPresence, lblPresenceValue, lblBattery, btnSettings
         });
         FormBorderStyle = FormBorderStyle.FixedSingle;
         MaximizeBox     = false;
@@ -76,5 +82,6 @@ partial class StatusForm
     private FlowLayoutPanel              pnlDevices       = default!;
     private Label                        lblPresence      = default!;
     private Label                        lblPresenceValue = default!;
+    private Label                        lblBattery       = default!;
     private System.Windows.Forms.Button  btnSettings      = default!;
 }

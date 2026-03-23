@@ -169,6 +169,13 @@ public sealed partial class SettingsForm : Form
         lblCurrPresence.Text = presenceKey;
     }
 
+    /// <summary>Update the battery reading in the status bar. Pass null to show "—". Thread-safe.</summary>
+    public void UpdateBattery(BatteryReading? reading)
+    {
+        if (InvokeRequired) { Invoke(() => UpdateBattery(reading)); return; }
+        sslBattery.Text = reading is null ? "Akku: —" : $"Akku: {reading}";
+    }
+
     /// <summary>Update the BLE connection status display. Thread-safe.</summary>
     public void UpdateBleStatus(string deviceName, BleConnectionState state, byte? protocolVersion = null)
     {

@@ -27,6 +27,9 @@ public sealed class BleService : IDisposable
     private static readonly Guid LedCharUuid =
         Guid.Parse("feda0101-51a7-4fb7-a27b-c720bef16ef7");
 
+    private static readonly Guid TelemetryCharUuid =
+        Guid.Parse("feda0102-51a7-4fb7-a27b-c720bef16ef7");
+
     private static readonly Guid ProtocolVerCharUuid =
         Guid.Parse("feda0103-51a7-4fb7-a27b-c720bef16ef7");
 
@@ -47,6 +50,11 @@ public sealed class BleService : IDisposable
     /// Raised when a non-fatal error occurs so the tray can show a balloon tip.
     /// </summary>
     public event EventHandler<string>? ErrorOccurred;
+
+    /// <summary>
+    /// Raised when a new battery telemetry packet is received (notify or initial read).
+    /// </summary>
+    public event EventHandler<BatteryReading>? BatteryChanged;
 
     // ── Public properties ─────────────────────────────────────────────────────
 
@@ -71,6 +79,12 @@ public sealed class BleService : IDisposable
     /// </summary>
     public byte? FirmwareProtocolVersion { get; private set; }
 
+    /// <summary>
+    /// Most recent battery reading received from the device.
+    /// Null until the first telemetry packet is received after connecting.
+    /// </summary>
+    public BatteryReading? LastBatteryReading { get; private set; }
+
     // ── Private state ─────────────────────────────────────────────────────────
 
     private readonly ulong?  _targetAddress;       // null = discovery mode
@@ -78,6 +92,7 @@ public sealed class BleService : IDisposable
 
     private BluetoothLEDevice?  _device;
     private GattCharacteristic? _ledChar;
+    private GattCharacteristic? _telemetryChar;
     private LedCommand?         _lastSentCommand;
 
     private BluetoothLEAdvertisementWatcher? _watcher;
@@ -387,6 +402,9 @@ public sealed class BleService : IDisposable
             // Old firmware without this characteristic is treated as version 0 (incompatible).
             await CheckProtocolVersionAsync(service, charCacheMode).ConfigureAwait(false);
 
+            // Subscribe to battery telemetry notifications and read initial value.
+            await SubscribeTelemetryAsync(service, charCacheMode).ConfigureAwait(false);
+
             LogService.Log($"[BLE:{DeviceName}] Connected.");
             _connectDiagnosticRaised = false;
             CurrentState = BleConnectionState.Connected;
@@ -568,6 +586,95 @@ public sealed class BleService : IDisposable
         }
     }
 
+    private async Task SubscribeTelemetryAsync(GattDeviceService service, BluetoothCacheMode cacheMode)
+    {
+        var result = await service
+            .GetCharacteristicsForUuidAsync(TelemetryCharUuid, cacheMode)
+            .AsTask()
+            .ConfigureAwait(false);
+
+        if (result.Status != GattCommunicationStatus.Success
+            || result.Characteristics.Count == 0)
+        {
+            LogService.Log($"[BLE:{DeviceName}] Telemetry characteristic not found — battery monitoring unavailable.");
+            return;
+        }
+
+        _telemetryChar = result.Characteristics[0];
+
+        // Enable notifications on the firmware side via the CCCD descriptor
+        var cccdResult = await _telemetryChar
+            .WriteClientCharacteristicConfigurationDescriptorAsync(
+                GattClientCharacteristicConfigurationDescriptorValue.Notify)
+            .AsTask()
+            .ConfigureAwait(false);
+
+        if (cccdResult == GattCommunicationStatus.Success)
+        {
+            _telemetryChar.ValueChanged += OnTelemetryValueChanged;
+            LogService.Log($"[BLE:{DeviceName}] Telemetry notifications enabled.");
+        }
+        else
+        {
+            LogService.Log($"[BLE:{DeviceName}] Could not enable telemetry notifications: {cccdResult}");
+        }
+
+        // Read initial value so the UI shows something before the first notify fires
+        var readResult = await _telemetryChar
+            .ReadValueAsync(cacheMode)
+            .AsTask()
+            .ConfigureAwait(false);
+
+        if (readResult.Status == GattCommunicationStatus.Success)
+            ParseTelemetryPacket(readResult.Value);
+    }
+
+    /// <summary>
+    /// Trigger an immediate on-demand read of the battery telemetry characteristic.
+    /// Returns the parsed reading, or null when not connected or on error.
+    /// </summary>
+    public async Task<BatteryReading?> ReadBatteryAsync()
+    {
+        if (_telemetryChar is null) return null;
+
+        try
+        {
+            var result = await _telemetryChar
+                .ReadValueAsync(BluetoothCacheMode.Uncached)
+                .AsTask()
+                .ConfigureAwait(false);
+
+            if (result.Status != GattCommunicationStatus.Success) return null;
+
+            ParseTelemetryPacket(result.Value);
+            return LastBatteryReading;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            LogService.Log($"[BLE:{DeviceName}] Battery read error: {ex.Message}");
+            return null;
+        }
+    }
+
+    private void OnTelemetryValueChanged(
+        GattCharacteristic sender,
+        GattValueChangedEventArgs args)
+        => ParseTelemetryPacket(args.CharacteristicValue);
+
+    private void ParseTelemetryPacket(Windows.Storage.Streams.IBuffer buffer)
+    {
+        if (buffer.Length < 3) return;
+
+        var reader  = DataReader.FromBuffer(buffer);
+        reader.ByteOrder = Windows.Storage.Streams.ByteOrder.LittleEndian;
+        int  mv  = reader.ReadUInt16();
+        int  soc = reader.ReadByte();
+
+        LastBatteryReading = new BatteryReading(mv, soc);
+        LogService.Log($"[BLE:{DeviceName}] Battery: {LastBatteryReading}");
+        BatteryChanged?.Invoke(this, LastBatteryReading);
+    }
+
     private void OnConnectionStatusChanged(BluetoothLEDevice sender, object args)
     {
         if (sender.ConnectionStatus == BluetoothConnectionStatus.Disconnected)
@@ -583,6 +690,12 @@ public sealed class BleService : IDisposable
 
         _connected               = false;
         _ledChar                 = null;
+        if (_telemetryChar is not null)
+        {
+            _telemetryChar.ValueChanged -= OnTelemetryValueChanged;
+            _telemetryChar = null;
+        }
+        LastBatteryReading       = null;
         FirmwareProtocolVersion  = null;
         _connectDiagnosticRaised = false;
         _device?.Dispose();

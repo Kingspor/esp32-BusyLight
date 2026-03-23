@@ -64,6 +64,8 @@ partial class SettingsForm
         sslProtocol  = new ToolStripStatusLabel();
         sslSep3      = new ToolStripStatusLabel();
         sslVersion   = new ToolStripStatusLabel();
+        sslSep4      = new ToolStripStatusLabel();
+        sslBattery   = new ToolStripStatusLabel();
 
         tabZuordnung.SuspendLayout();
         menuStrip.SuspendLayout();
@@ -391,7 +393,7 @@ partial class SettingsForm
 
         // statusStrip
         statusStrip.Items.AddRange(new ToolStripItem[]
-            { sslTeams, sslSep, sslBle, sslSep2, sslProtocol, sslSep3, sslVersion });
+            { sslTeams, sslSep, sslBle, sslSep2, sslProtocol, sslSep3, sslVersion, sslSep4, sslBattery });
         statusStrip.Location = new Point(0, 437);
         statusStrip.Name = "statusStrip";
         statusStrip.Size = new Size(710, 22);
@@ -422,6 +424,13 @@ partial class SettingsForm
 
         sslVersion.Name = "sslVersion";
         sslVersion.Text = "App v—";
+
+        sslSep4.Name      = "sslSep4";
+        sslSep4.Text      = " | ";
+        sslSep4.ForeColor = SystemColors.GrayText;
+
+        sslBattery.Name = "sslBattery";
+        sslBattery.Text = "Akku: —";
 
         // SettingsForm
         AutoScaleDimensions = new SizeF(7F, 15F);
@@ -519,4 +528,6 @@ partial class SettingsForm
     private System.Windows.Forms.ToolStripStatusLabel   sslProtocol          = default!;
     private System.Windows.Forms.ToolStripStatusLabel   sslSep3              = default!;
     private System.Windows.Forms.ToolStripStatusLabel   sslVersion           = default!;
+    private System.Windows.Forms.ToolStripStatusLabel   sslSep4              = default!;
+    private System.Windows.Forms.ToolStripStatusLabel   sslBattery           = default!;
 }

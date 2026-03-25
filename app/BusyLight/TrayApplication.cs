@@ -350,11 +350,11 @@ public sealed class TrayApplication : ApplicationContext
             // Connection-time accounting (UI thread — no race condition)
             if (state == BleConnectionState.Connected)
             {
-                _connectedSince = DateTime.Now;
+                _connectedSince = DateTime.UtcNow;
             }
             else if (state == BleConnectionState.Disconnected && _connectedSince.HasValue)
             {
-                _totalConnectedTime += DateTime.Now - _connectedSince.Value;
+                _totalConnectedTime += DateTime.UtcNow - _connectedSince.Value;
                 _connectedSince      = null;
             }
 
@@ -650,7 +650,7 @@ public sealed class TrayApplication : ApplicationContext
     /// </summary>
     private TimeSpan GetTotalConnectedTime()
         => _totalConnectedTime +
-           (_connectedSince.HasValue ? DateTime.Now - _connectedSince.Value : TimeSpan.Zero);
+           (_connectedSince.HasValue ? DateTime.UtcNow - _connectedSince.Value : TimeSpan.Zero);
 
     /// <summary>
     /// Show the history window (created lazily on first use).

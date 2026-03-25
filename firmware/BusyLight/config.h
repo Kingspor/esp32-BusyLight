@@ -89,8 +89,8 @@ constexpr uint16_t BLE_CONN_TIMEOUT      = 400;   //  4 s supervision timeout (u
 // ============================================================
 // Voltage divider: BAT+ -- R1 -- GPIO3(ADC) -- R2 -- GND
 // Recommended values: R1=100kΩ, R2=150kΩ → ratio 0.6 → 4.2V→2.52V at ADC
-#define BATTERY_ADC_PIN             3       // GPIO 3 = ADC1_CH3
-#define BATTERY_DIVIDER_R1_OHM      100000  // Upper resistor (BAT+ side)
-#define BATTERY_DIVIDER_R2_OHM      150000  // Lower resistor (ADC/GND side)
-#define BATTERY_NOTIFY_INTERVAL_MS  300000  // Notify interval: 5 minutes
-#define BATTERY_SAMPLES             16      // ADC averaging samples
+constexpr int           BATTERY_ADC_PIN            = 3;       // GPIO 3 = ADC1_CH3
+constexpr uint32_t      BATTERY_DIVIDER_R1_OHM     = 100000;  // Upper resistor (BAT+ side)
+constexpr uint32_t      BATTERY_DIVIDER_R2_OHM     = 150000;  // Lower resistor (ADC/GND side)
+constexpr unsigned long BATTERY_NOTIFY_INTERVAL_MS  = 300000;  // Notify interval: 5 minutes
+constexpr int           BATTERY_SAMPLES             = 16;      // ADC averaging samples

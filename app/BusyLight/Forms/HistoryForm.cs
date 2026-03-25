@@ -24,12 +24,17 @@ public sealed class HistoryForm : Form
         public BufferedPanel() { DoubleBuffered = true; }
     }
 
+    // ── Constants ─────────────────────────────────────────────────────────────
+
+    private const string SegoeUiFont = "Segoe UI";
+
     // ── Data (passed by reference — always up to date) ────────────────────────
 
     private readonly List<BatteryDataPoint> _batteryHistory;
     private readonly List<PresenceRecord>   _presenceHistory;
     private readonly Func<TimeSpan>         _getTotalConnected;
     private readonly DateTime               _appStartTime;
+    private readonly DateTime               _appStartUtc;
 
     // ── Controls ──────────────────────────────────────────────────────────────
 
@@ -54,6 +59,7 @@ public sealed class HistoryForm : Form
         _presenceHistory   = presenceHistory;
         _getTotalConnected = getTotalConnectedTime;
         _appStartTime      = appStartTime;
+        _appStartUtc       = appStartTime.ToUniversalTime();
 
         Text          = "BusyLight — Verlauf";
         Size          = new Size(860, 580);
@@ -124,6 +130,7 @@ public sealed class HistoryForm : Form
         split.Panel1.Controls.Add(_timelinePanel);
 
         _summaryGrid = BuildSummaryGrid();
+        _summaryGrid.CellPainting += OnSummaryCellPainting;
         split.Panel2.Controls.Add(_summaryGrid);
 
         // ── Refresh timer ─────────────────────────────────────────────────────
@@ -177,7 +184,7 @@ public sealed class HistoryForm : Form
 
     private void UpdateStatusStrip()
     {
-        var uptime    = DateTime.Now - _appStartTime;
+        var uptime    = DateTime.UtcNow - _appStartUtc;
         var connected = _getTotalConnected();
         _lblUptime.Text    = $"Laufzeit: {FormatDuration(uptime)}";
         _lblConnected.Text = $"BLE verbunden: {FormatDuration(connected)} (gesamt seit Programmstart)";
@@ -226,7 +233,7 @@ public sealed class HistoryForm : Form
 
         // Horizontal grid lines + Y-axis labels
         using var gridPen   = new Pen(Color.FromArgb(218, 218, 218));
-        using var labelFont = new Font("Segoe UI", 8f);
+        using var labelFont = new Font(SegoeUiFont, 8f);
         var sfRight = new StringFormat { Alignment = StringAlignment.Far };
 
         for (float v = MinV; v <= MaxV + 0.01f; v += 0.25f)
@@ -248,7 +255,7 @@ public sealed class HistoryForm : Form
             tMin = DateTime.Now.AddMinutes(-30);
             tMax = DateTime.Now;
             DrawTimeAxis(g, plotRect.X, plotRect.Right, plotRect.Bottom + 4, tMin, tMax, labelFont);
-            using var ph = new Font("Segoe UI", 10f);
+            using var ph = new Font(SegoeUiFont, 10f);
             g.DrawString("Noch keine Messwerte", ph, Brushes.LightGray, plotRect,
                 new StringFormat { Alignment = StringAlignment.Center, LineAlignment = StringAlignment.Center });
             return;
@@ -287,9 +294,10 @@ public sealed class HistoryForm : Form
             float x2 = TimeToX(curr.Timestamp, plotRect, tMin, tMax);
             float y2 = VoltToY(curr.Reading.VoltageV, plotRect, MinV, MaxV);
 
-            var pen = curr.Reading.SocPercent < 20 ? penRed
-                    : curr.Reading.SocPercent < 40 ? penOrange
-                    : penGreen;
+            Pen pen;
+            if      (curr.Reading.SocPercent < 20) pen = penRed;
+            else if (curr.Reading.SocPercent < 40) pen = penOrange;
+            else                                   pen = penGreen;
             g.DrawLine(pen, x1, y1, x2, y2);
         }
 
@@ -298,10 +306,7 @@ public sealed class HistoryForm : Form
         {
             float x    = TimeToX(pt.Timestamp, plotRect, tMin, tMax);
             float y    = VoltToY(pt.Reading.VoltageV, plotRect, MinV, MaxV);
-            var dotClr = pt.Reading.SocPercent < 20 ? Color.FromArgb(210, 55, 55)
-                       : pt.Reading.SocPercent < 40 ? Color.FromArgb(220, 140, 0)
-                       : Color.FromArgb(30, 160, 80);
-            using var dot = new SolidBrush(dotClr);
+            using var dot = new SolidBrush(GetSocColor(pt.Reading.SocPercent));
             g.FillEllipse(dot, x - 3f, y - 3f, 6f, 6f);
         }
 
@@ -335,7 +340,7 @@ public sealed class HistoryForm : Form
         g.FillRectangle(SystemBrushes.ControlLight,
             new RectangleF(plotRect.X, barY, plotRect.Width, barH));
 
-        using var labelFont = new Font("Segoe UI", 8f);
+        using var labelFont = new Font(SegoeUiFont, 8f);
         var sfCenter = new StringFormat
         {
             Alignment     = StringAlignment.Center,
@@ -387,7 +392,7 @@ public sealed class HistoryForm : Form
         // No data
         if (_presenceHistory.Count == 0)
         {
-            using var phFont = new Font("Segoe UI", 10f);
+            using var phFont = new Font(SegoeUiFont, 10f);
             g.DrawString("Noch keine Verlaufsdaten", phFont, Brushes.LightGray,
                 new RectangleF(plotRect.X, barY, plotRect.Width, barH), sfCenter);
         }
@@ -411,6 +416,16 @@ public sealed class HistoryForm : Form
         return r.X + (float)(frac * r.Width);
     }
 
+    private static int GetTickIntervalMinutes(double spanMin)
+    {
+        if (spanMin <=   5) return   1;
+        if (spanMin <=  30) return   5;
+        if (spanMin <= 120) return  15;
+        if (spanMin <= 360) return  30;
+        if (spanMin <= 720) return  60;
+        return 120;
+    }
+
     private static void DrawTimeAxis(
         Graphics g,
         float xLeft, float xRight, float yBase,
@@ -418,16 +433,11 @@ public sealed class HistoryForm : Form
         Font font)
     {
         double spanMin = (tMax - tMin).TotalMinutes;
-        int tickMin    = spanMin <=   5 ?   1
-                       : spanMin <=  30 ?   5
-                       : spanMin <= 120 ?  15
-                       : spanMin <= 360 ?  30
-                       : spanMin <= 720 ?  60 : 120;
+        int tickMin    = GetTickIntervalMinutes(spanMin);
 
         // Round tMin up to the next tick boundary
         int boundary = ((int)tMin.TimeOfDay.TotalMinutes / tickMin + 1) * tickMin;
-        var tick = new DateTime(tMin.Year, tMin.Month, tMin.Day)
-            .AddMinutes(boundary);
+        var tick = tMin.Date.AddMinutes(boundary);
 
         using var tickPen = new Pen(Color.FromArgb(175, 175, 175));
 
@@ -448,7 +458,7 @@ public sealed class HistoryForm : Form
 
     // ── Summary Grid ──────────────────────────────────────────────────────────
 
-    private DataGridView BuildSummaryGrid()
+    private static DataGridView BuildSummaryGrid()
     {
         var dgv = new DataGridView
         {
@@ -475,7 +485,6 @@ public sealed class HistoryForm : Form
         dgv.Columns.Add(new DataGridViewTextBoxColumn
             { Name = "Gesamt",   HeaderText = "Gesamt",    FillWeight = 21 });
 
-        dgv.CellPainting += OnSummaryCellPainting;
         return dgv;
     }
 
@@ -542,6 +551,13 @@ public sealed class HistoryForm : Form
     }
 
     // ── Static helpers ────────────────────────────────────────────────────────
+
+    private static Color GetSocColor(int soc)
+    {
+        if (soc < 20) return Color.FromArgb(210, 55, 55);
+        if (soc < 40) return Color.FromArgb(220, 140, 0);
+        return Color.FromArgb(30, 160, 80);
+    }
 
     private static Color StatusColor(string key) => key switch
     {

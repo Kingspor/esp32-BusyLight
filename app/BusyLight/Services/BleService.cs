@@ -646,7 +646,13 @@ public sealed class BleService : IDisposable
 
             if (result.Status != GattCommunicationStatus.Success) return null;
 
-            ParseTelemetryPacket(result.Value);
+            var reading = ParseTelemetryPacket(result.Value);
+            if (reading is not null)
+            {
+                LastBatteryReading = reading;
+                LogService.Log($"[BLE:{DeviceName}] Battery: {reading}");
+                BatteryChanged?.Invoke(this, reading);
+            }
             return LastBatteryReading;
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
@@ -659,20 +665,23 @@ public sealed class BleService : IDisposable
     private void OnTelemetryValueChanged(
         GattCharacteristic sender,
         GattValueChangedEventArgs args)
-        => ParseTelemetryPacket(args.CharacteristicValue);
-
-    private void ParseTelemetryPacket(Windows.Storage.Streams.IBuffer buffer)
     {
-        if (buffer.Length < 3) return;
+        var reading = ParseTelemetryPacket(args.CharacteristicValue);
+        if (reading is null) return;
+        LastBatteryReading = reading;
+        LogService.Log($"[BLE:{DeviceName}] Battery: {reading}");
+        BatteryChanged?.Invoke(this, reading);
+    }
 
-        var reader  = DataReader.FromBuffer(buffer);
+    private static BatteryReading? ParseTelemetryPacket(Windows.Storage.Streams.IBuffer buffer)
+    {
+        if (buffer.Length < 3) return null;
+
+        var reader = DataReader.FromBuffer(buffer);
         reader.ByteOrder = Windows.Storage.Streams.ByteOrder.LittleEndian;
-        int  mv  = reader.ReadUInt16();
-        int  soc = reader.ReadByte();
-
-        LastBatteryReading = new BatteryReading(mv, soc);
-        LogService.Log($"[BLE:{DeviceName}] Battery: {LastBatteryReading}");
-        BatteryChanged?.Invoke(this, LastBatteryReading);
+        int mv  = reader.ReadUInt16();
+        int soc = reader.ReadByte();
+        return new BatteryReading(mv, soc);
     }
 
     private void OnConnectionStatusChanged(BluetoothLEDevice sender, object args)

@@ -1,5 +1,7 @@
 #include "GattServer.h"
 
+#include <array>
+
 // BLE library headers are included only here, never in GattServer.h.
 // This prevents the Windows case-insensitive filename collision between
 // our former BleServer.h and the ESP32 library's BLEServer.h.
@@ -131,12 +133,12 @@ void BleServer::begin(LedController& ledController) {
     {
         uint16_t mv  = readBatteryMillivolts();
         uint8_t  soc = estimateSoc(mv);
-        uint8_t  buf[3] = {
+        std::array<uint8_t, 3> buf = {
             static_cast<uint8_t>(mv & 0xFF),
             static_cast<uint8_t>(mv >> 8),
             soc
         };
-        _pTelemetryChar->setValue(buf, sizeof(buf));
+        _pTelemetryChar->setValue(buf.data(), buf.size());
         Serial.printf("[BLE] Battery initial read: %u mV, %u%%\n", mv, soc);
     }
 
@@ -229,12 +231,12 @@ void BleServer::updateTelemetry() {
     uint16_t mv  = readBatteryMillivolts();
     uint8_t  soc = estimateSoc(mv);
 
-    uint8_t buf[3] = {
+    std::array<uint8_t, 3> buf = {
         static_cast<uint8_t>(mv & 0xFF),
         static_cast<uint8_t>(mv >> 8),
         soc
     };
-    _pTelemetryChar->setValue(buf, sizeof(buf));
+    _pTelemetryChar->setValue(buf.data(), buf.size());
     _pTelemetryChar->notify();
 
     Serial.printf("[BLE] Telemetry notify: %u mV, %u%%\n", mv, soc);
@@ -250,7 +252,7 @@ uint16_t BleServer::readBatteryMillivolts() {
     uint32_t v_adc_mv = sum / BATTERY_SAMPLES;
 
     // Apply voltage-divider correction: V_bat = V_adc * (R1 + R2) / R2
-    uint32_t v_bat_mv = (uint32_t)v_adc_mv
+    uint32_t v_bat_mv = v_adc_mv
                         * (BATTERY_DIVIDER_R1_OHM + BATTERY_DIVIDER_R2_OHM)
                         / BATTERY_DIVIDER_R2_OHM;
 
@@ -260,13 +262,13 @@ uint16_t BleServer::readBatteryMillivolts() {
 uint8_t BleServer::estimateSoc(uint16_t mv) {
     // Li-Ion 18650 discharge curve lookup table (voltage_mv, soc_percent).
     // Values based on a typical discharge at moderate load.
-    static const uint16_t voltages[] = {
+    static constexpr std::array<uint16_t, 11> voltages = {
         3200, 3300, 3400, 3500, 3600, 3700, 3800, 3900, 4000, 4100, 4200
     };
-    static const uint8_t socs[] = {
+    static constexpr std::array<uint8_t, 11> socs = {
            0,    3,    7,   15,   25,   40,   54,   67,   79,   90,  100
     };
-    constexpr int count = sizeof(voltages) / sizeof(voltages[0]);
+    constexpr auto count = voltages.size();
 
     if (mv <= voltages[0])        return socs[0];
     if (mv >= voltages[count - 1]) return socs[count - 1];
@@ -274,8 +276,10 @@ uint8_t BleServer::estimateSoc(uint16_t mv) {
     // Linear interpolation between bracketing table entries
     for (int i = 1; i < count; i++) {
         if (mv <= voltages[i]) {
-            uint16_t v0 = voltages[i - 1], v1 = voltages[i];
-            uint8_t  s0 = socs[i - 1],     s1 = socs[i];
+            uint16_t v0 = voltages[i - 1];
+            uint16_t v1 = voltages[i];
+            uint8_t  s0 = socs[i - 1];
+            uint8_t  s1 = socs[i];
             return (uint8_t)(s0 + (uint32_t)(s1 - s0) * (mv - v0) / (v1 - v0));
         }
     }

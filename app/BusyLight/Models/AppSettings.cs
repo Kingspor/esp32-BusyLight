@@ -71,6 +71,13 @@ public class PollingSettings
     /// Default 0.6 matches the previous firmware-side BRIGHTNESS_CAP_FACTOR.
     /// </summary>
     public float BrightnessCap { get; set; } = 0.6f;
+
+    /// <summary>
+    /// Battery voltage threshold in millivolts for the low-battery balloon warning.
+    /// Set to 0 to disable the warning entirely.
+    /// Default: 3400 mV (≈ 7 % SoC for a Li-Ion 18650).
+    /// </summary>
+    public int BatteryWarningVoltageMv { get; set; } = 3400;
 }
 
 /// <summary>

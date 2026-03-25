@@ -50,6 +50,7 @@ void loop() {
     if (bleServer.isConnected()) {
         // Client connected: run LED animations, status LED solid ON
         ledController.update();
+        bleServer.updateTelemetry();
         digitalWrite(STATUS_LED_PIN, LOW);  // Active LOW = LED on
     } else {
         // No client: LED ring off, status LED blinks at 1 Hz

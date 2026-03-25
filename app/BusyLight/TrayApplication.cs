@@ -28,6 +28,23 @@ public sealed class TrayApplication : ApplicationContext
 
     private SettingsForm? _settingsForm;
 
+    // ── History window ────────────────────────────────────────────────────────
+
+    private HistoryForm? _historyForm;
+
+    // ── History data ──────────────────────────────────────────────────────────
+
+    // All battery readings since start (capped at 500 entries, oldest removed first)
+    private readonly List<BatteryDataPoint> _batteryHistory  = new();
+
+    // All presence/override intervals since start
+    private readonly List<PresenceRecord>   _presenceHistory = new();
+
+    // Connection-time accounting
+    private readonly DateTime _appStartTime        = DateTime.Now;
+    private          DateTime? _connectedSince;
+    private          TimeSpan  _totalConnectedTime = TimeSpan.Zero;
+
     // ── Tray UI ───────────────────────────────────────────────────────────────
 
     private readonly NotifyIcon       _notifyIcon;
@@ -153,6 +170,7 @@ public sealed class TrayApplication : ApplicationContext
             _settings.Polling.BleRetryIntervalSeconds);
         _bleService.ConnectionChanged += OnBleConnectionChanged;
         _bleService.ErrorOccurred     += OnServiceError;
+        _bleService.BatteryChanged    += OnBatteryChanged;
         _bleService.StartScanning();
     }
 
@@ -189,6 +207,11 @@ public sealed class TrayApplication : ApplicationContext
         var showItem = new ToolStripMenuItem("BusyLight öffnen");
         showItem.Click += (_, _) => ShowSettingsForm();
         _contextMenu.Items.Add(showItem);
+
+        // Open the history window
+        var historyItem = new ToolStripMenuItem("Verlauf anzeigen");
+        historyItem.Click += (_, _) => ShowHistoryForm();
+        _contextMenu.Items.Add(historyItem);
 
         // Fetch Teams presence immediately (clears any active override)
         var fetchNowItem = new ToolStripMenuItem("Status jetzt abrufen");
@@ -255,7 +278,11 @@ public sealed class TrayApplication : ApplicationContext
         _activeOverride = presenceKey;
         PersistOverrideIfNeeded();
         UpdateTrayIcon(presenceKey);
-        InvokeOnUiThread(RefreshOverrideUi);
+        InvokeOnUiThread(() =>
+        {
+            RefreshOverrideUi();
+            RecordPresenceChange(presenceKey, isOverride: true);
+        });
         SendLedCommand(presenceKey);
     }
 
@@ -263,7 +290,11 @@ public sealed class TrayApplication : ApplicationContext
     {
         _activeOverride = null;
         PersistOverrideIfNeeded();
-        InvokeOnUiThread(RefreshOverrideUi);
+        InvokeOnUiThread(() =>
+        {
+            RefreshOverrideUi();
+            RecordPresenceChange(_currentPresence, isOverride: false);
+        });
         SendLedCommand(_currentPresence);
         UpdateTrayIcon(_currentPresence);
     }
@@ -287,6 +318,10 @@ public sealed class TrayApplication : ApplicationContext
                 _statusItem.Text = $"Status: {availability}";
 
             _settingsForm?.UpdatePresence(availability);
+
+            // Record only when LEDs reflect Teams status (no override active)
+            if (_activeOverride is null)
+                RecordPresenceChange(availability, isOverride: false);
         });
 
         // Do not change LEDs while an override is active
@@ -312,11 +347,29 @@ public sealed class TrayApplication : ApplicationContext
 
         InvokeOnUiThread(() =>
         {
+            // Connection-time accounting (UI thread — no race condition)
+            if (state == BleConnectionState.Connected)
+            {
+                _connectedSince = DateTime.UtcNow;
+            }
+            else if (state == BleConnectionState.Disconnected && _connectedSince.HasValue)
+            {
+                _totalConnectedTime += DateTime.UtcNow - _connectedSince.Value;
+                _connectedSince      = null;
+            }
+
             if (message is not null)
                 _notifyIcon.ShowBalloonTip(3000, "BusyLight", message,
                     state == BleConnectionState.Connected ? ToolTipIcon.Info : ToolTipIcon.Warning);
 
             _settingsForm?.UpdateBleStatus(name, state, svc?.FirmwareProtocolVersion);
+
+            // Clear battery reading in the UI when the device disconnects
+            if (state == BleConnectionState.Disconnected)
+            {
+                _settingsForm?.UpdateBattery(null);
+                UpdateTrayTooltip(_activeOverride ?? _currentPresence);
+            }
         });
 
         // Re-send the current command after reconnect so the device is in sync
@@ -324,6 +377,31 @@ public sealed class TrayApplication : ApplicationContext
         {
             string key = _activeOverride ?? _currentPresence;
             SendLedCommandTo(svc, key);
+        }
+    }
+
+    private void OnBatteryChanged(object? sender, BatteryReading reading)
+    {
+        InvokeOnUiThread(() =>
+        {
+            _settingsForm?.UpdateBattery(reading);
+            UpdateTrayTooltip(_activeOverride ?? _currentPresence);
+
+            // Add to history (cap at 500 entries to avoid unbounded growth)
+            _batteryHistory.Add(new BatteryDataPoint(DateTime.Now, reading));
+            if (_batteryHistory.Count > 500)
+                _batteryHistory.RemoveAt(0);
+
+            _historyForm?.NotifyBatteryUpdated();
+        });
+
+        if (_settings.Polling.BatteryWarningVoltageMv > 0
+            && reading.VoltageMv <= _settings.Polling.BatteryWarningVoltageMv)
+        {
+            InvokeOnUiThread(() =>
+                _notifyIcon.ShowBalloonTip(8000, "BusyLight — Akku schwach",
+                    $"Batteriespannung: {reading} — bitte laden.",
+                    ToolTipIcon.Warning));
         }
     }
 
@@ -364,13 +442,22 @@ public sealed class TrayApplication : ApplicationContext
     {
         var color = PresenceColor(presenceKey);
         var icon  = CreatePresenceIcon(color);
-        var tip   = $"BusyLight — {presenceKey}";
 
         InvokeOnUiThread(() =>
         {
             _notifyIcon.Icon = icon;
-            _notifyIcon.Text = tip.Length > 63 ? tip[..63] : tip;  // NotifyIcon tooltip limit
+            UpdateTrayTooltip(presenceKey);
         });
+    }
+
+    private void UpdateTrayTooltip(string presenceKey)
+    {
+        var battery = _bleService?.LastBatteryReading;
+        var tip     = battery is null
+            ? $"BusyLight — {presenceKey}"
+            : $"BusyLight — {presenceKey} | {battery}";
+
+        _notifyIcon.Text = tip.Length > 63 ? tip[..63] : tip;  // NotifyIcon tooltip limit
     }
 
     /// <summary>Create a simple 16×16 filled-circle icon in the given colour.</summary>
@@ -473,8 +560,11 @@ public sealed class TrayApplication : ApplicationContext
         // and would otherwise overwrite whatever was set before Show().)
         _settingsForm.UpdatePresence(_currentPresence);
         if (_bleService is not null)
+        {
             _settingsForm.UpdateBleStatus(_bleService.DeviceName, _bleService.CurrentState,
                                           _bleService.FirmwareProtocolVersion);
+            _settingsForm.UpdateBattery(_bleService.LastBatteryReading);
+        }
     }
 
     private void SyncSettingsFormOverrideUi()
@@ -519,6 +609,7 @@ public sealed class TrayApplication : ApplicationContext
             {
                 _bleService.ConnectionChanged -= OnBleConnectionChanged;
                 _bleService.ErrorOccurred     -= OnServiceError;
+                _bleService.BatteryChanged    -= OnBatteryChanged;
                 _bleService.Stop();
                 _bleService.Dispose();
                 _bleService = null;
@@ -530,6 +621,51 @@ public sealed class TrayApplication : ApplicationContext
         // Re-send the current command so LEDs reflect any colour/brightness changes
         string key = _activeOverride ?? _currentPresence;
         SendLedCommand(key);
+    }
+
+    // ── History helpers ───────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Close the current open presence record (if any) and start a new one.
+    /// Must be called on the UI thread.
+    /// </summary>
+    private void RecordPresenceChange(string availability, bool isOverride)
+    {
+        if (_presenceHistory.Count > 0)
+            _presenceHistory[^1].End = DateTime.Now;
+
+        _presenceHistory.Add(new PresenceRecord
+        {
+            Start        = DateTime.Now,
+            Availability = availability,
+            IsOverride   = isOverride,
+        });
+
+        _historyForm?.NotifyPresenceUpdated();
+    }
+
+    /// <summary>
+    /// Total time the BLE device has been connected since program start
+    /// (includes the current session if still connected).
+    /// </summary>
+    private TimeSpan GetTotalConnectedTime()
+        => _totalConnectedTime +
+           (_connectedSince.HasValue ? DateTime.UtcNow - _connectedSince.Value : TimeSpan.Zero);
+
+    /// <summary>
+    /// Show the history window (created lazily on first use).
+    /// Must be called on the UI thread.
+    /// </summary>
+    private void ShowHistoryForm()
+    {
+        _historyForm ??= new HistoryForm(
+            _batteryHistory,
+            _presenceHistory,
+            GetTotalConnectedTime,
+            _appStartTime);
+
+        _historyForm.Show();
+        _historyForm.BringToFront();
     }
 
     private void ShowError(string message)
@@ -562,6 +698,9 @@ public sealed class TrayApplication : ApplicationContext
         _settingsForm?.Dispose();
         _settingsForm = null;
 
+        _historyForm?.Dispose();
+        _historyForm = null;
+
         _notifyIcon.Visible = false;
         _notifyIcon.Dispose();
 
@@ -577,6 +716,7 @@ public sealed class TrayApplication : ApplicationContext
             _graphService?.Dispose();
             _bleService?.Dispose();
             _settingsForm?.Dispose();
+            _historyForm?.Dispose();
             _notifyIcon.Dispose();
             _contextMenu.Dispose();
         }

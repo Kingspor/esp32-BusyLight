@@ -83,3 +83,14 @@ constexpr uint16_t BLE_CONN_TIMEOUT      = 400;   //  4 s supervision timeout (u
 
 // Status LED blink half-period when no client is connected (ms)
 #define STATUS_LED_BLINK_INTERVAL_MS  500
+
+// ============================================================
+// Battery voltage monitoring
+// ============================================================
+// Voltage divider: BAT+ -- R1 -- GPIO3(ADC) -- R2 -- GND
+// Recommended values: R1=100kΩ, R2=150kΩ → ratio 0.6 → 4.2V→2.52V at ADC
+constexpr int           BATTERY_ADC_PIN            = 3;       // GPIO 3 = ADC1_CH3
+constexpr uint32_t      BATTERY_DIVIDER_R1_OHM     = 100000;  // Upper resistor (BAT+ side)
+constexpr uint32_t      BATTERY_DIVIDER_R2_OHM     = 150000;  // Lower resistor (ADC/GND side)
+constexpr unsigned long BATTERY_NOTIFY_INTERVAL_MS  = 300000;  // Notify interval: 5 minutes
+constexpr int           BATTERY_SAMPLES             = 16;      // ADC averaging samples

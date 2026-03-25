@@ -1,5 +1,7 @@
 #include "GattServer.h"
 
+#include <array>
+
 // BLE library headers are included only here, never in GattServer.h.
 // This prevents the Windows case-insensitive filename collision between
 // our former BleServer.h and the ESP32 library's BLEServer.h.
@@ -115,15 +117,30 @@ void BleServer::begin(LedController& ledController) {
     );
     _pLedChar->setCallbacks(_ledCharCallbacks);
 
-    // Telemetry characteristic: readable and notifiable (stub — not yet implemented)
+    // Configure ADC pin for battery voltage measurement.
+    // Use 12 dB attenuation (0–3.1 V input range) on this pin only.
+    analogSetPinAttenuation(BATTERY_ADC_PIN, ADC_11db);
+
+    // Telemetry characteristic: readable and notifiable.
+    // Format: 3 bytes — [voltage_mv_lo, voltage_mv_hi, soc_percent]
     _pTelemetryChar = pService->createCharacteristic(
         TELEMETRY_CHAR_UUID,
         BLECharacteristic::PROPERTY_READ | BLECharacteristic::PROPERTY_NOTIFY
     );
     // Client Characteristic Configuration descriptor required for NOTIFY
     _pTelemetryChar->addDescriptor(new BLE2902());
-    // Stub value so a connected client can read something meaningful
-    _pTelemetryChar->setValue("BusyLight v1.0");
+    // Populate an initial reading so READ-on-demand returns a real value immediately
+    {
+        uint16_t mv  = readBatteryMillivolts();
+        uint8_t  soc = estimateSoc(mv);
+        std::array<uint8_t, 3> buf = {
+            static_cast<uint8_t>(mv & 0xFF),
+            static_cast<uint8_t>(mv >> 8),
+            soc
+        };
+        _pTelemetryChar->setValue(buf.data(), buf.size());
+        Serial.printf("[BLE] Battery initial read: %u mV, %u%%\n", mv, soc);
+    }
 
     // Protocol version characteristic: read-only single byte.
     // The Windows app reads this on connect and warns if the version is incompatible.
@@ -198,4 +215,73 @@ void BleServer::update() {
 
 bool BleServer::isConnected() const {
     return _deviceConnected;
+}
+
+// ============================================================
+// Battery telemetry
+// ============================================================
+
+void BleServer::updateTelemetry() {
+    if (!_deviceConnected) return;
+
+    unsigned long now = millis();
+    if (now - _lastTelemetryNotifyMs < BATTERY_NOTIFY_INTERVAL_MS) return;
+    _lastTelemetryNotifyMs = now;
+
+    uint16_t mv  = readBatteryMillivolts();
+    uint8_t  soc = estimateSoc(mv);
+
+    std::array<uint8_t, 3> buf = {
+        static_cast<uint8_t>(mv & 0xFF),
+        static_cast<uint8_t>(mv >> 8),
+        soc
+    };
+    _pTelemetryChar->setValue(buf.data(), buf.size());
+    _pTelemetryChar->notify();
+
+    Serial.printf("[BLE] Telemetry notify: %u mV, %u%%\n", mv, soc);
+}
+
+uint16_t BleServer::readBatteryMillivolts() {
+    // Average BATTERY_SAMPLES readings to reduce ADC noise.
+    // analogReadMilliVolts() uses the ESP32-C3's internal ADC calibration.
+    uint32_t sum = 0;
+    for (int i = 0; i < BATTERY_SAMPLES; i++) {
+        sum += analogReadMilliVolts(BATTERY_ADC_PIN);
+    }
+    uint32_t v_adc_mv = sum / BATTERY_SAMPLES;
+
+    // Apply voltage-divider correction: V_bat = V_adc * (R1 + R2) / R2
+    uint32_t v_bat_mv = v_adc_mv
+                        * (BATTERY_DIVIDER_R1_OHM + BATTERY_DIVIDER_R2_OHM)
+                        / BATTERY_DIVIDER_R2_OHM;
+
+    return (uint16_t)v_bat_mv;
+}
+
+uint8_t BleServer::estimateSoc(uint16_t mv) {
+    // Li-Ion 18650 discharge curve lookup table (voltage_mv, soc_percent).
+    // Values based on a typical discharge at moderate load.
+    static constexpr std::array<uint16_t, 11> voltages = {
+        3200, 3300, 3400, 3500, 3600, 3700, 3800, 3900, 4000, 4100, 4200
+    };
+    static constexpr std::array<uint8_t, 11> socs = {
+           0,    3,    7,   15,   25,   40,   54,   67,   79,   90,  100
+    };
+    constexpr auto count = voltages.size();
+
+    if (mv <= voltages[0])        return socs[0];
+    if (mv >= voltages[count - 1]) return socs[count - 1];
+
+    // Linear interpolation between bracketing table entries
+    for (int i = 1; i < count; i++) {
+        if (mv <= voltages[i]) {
+            uint16_t v0 = voltages[i - 1];
+            uint16_t v1 = voltages[i];
+            uint8_t  s0 = socs[i - 1];
+            uint8_t  s1 = socs[i];
+            return (uint8_t)(s0 + (uint32_t)(s1 - s0) * (mv - v0) / (v1 - v0));
+        }
+    }
+    return socs[count - 1];
 }

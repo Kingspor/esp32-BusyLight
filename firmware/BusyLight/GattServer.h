@@ -26,6 +26,10 @@ public:
     // Must be called from loop().
     void update();
 
+    // Read battery voltage via ADC and notify the connected client if the
+    // notify interval has elapsed.  Must be called from loop().
+    void updateTelemetry();
+
     // Returns true while a client is connected.
     bool isConnected() const;
 
@@ -60,4 +64,14 @@ private:
     // Heap-allocated callback instances (lifetime == BleServer lifetime)
     ServerCallbacks*  _serverCallbacks  = nullptr;
     LedCharCallbacks* _ledCharCallbacks = nullptr;
+
+    // Battery telemetry state
+    unsigned long _lastTelemetryNotifyMs = 0;
+
+    // Read the battery voltage from the ADC and apply the voltage-divider
+    // correction.  Returns the result in millivolts.
+    uint16_t readBatteryMillivolts();
+
+    // Estimate state-of-charge (0–100 %) from a Li-Ion cell voltage in mV.
+    uint8_t estimateSoc(uint16_t mv);
 };

@@ -57,6 +57,14 @@ public partial class StatusForm : Form
         lblPresenceValue.Text = presenceKey;
     }
 
+    /// <summary>Update the battery reading label. Pass null to show "—".</summary>
+    public void UpdateBattery(BatteryReading? reading)
+    {
+        if (InvokeRequired) { Invoke(() => UpdateBattery(reading)); return; }
+
+        lblBattery.Text = reading is null ? "Akku: —" : $"Akku: {reading}";
+    }
+
     // ── Dynamic device rows ───────────────────────────────────────────────────
 
     /// <summary>

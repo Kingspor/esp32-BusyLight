@@ -1,0 +1,47 @@
+name: Auto-Release on Version Bump
+
+# Triggers whenever a commit lands on main.
+# Reads the version from BusyLight.csproj and creates a tag if it does not
+# exist yet — which in turn fires release.yml to build and publish the release.
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: write
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  tag-if-new-version:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Read version from csproj
+        id: version
+        run: |
+          VERSION=$(grep -oP '(?<=<Version>)[^<]+' app/BusyLight/BusyLight.csproj)
+          echo "VERSION=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "TAG=v$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Check if tag already exists
+        id: tag_check
+        run: |
+          if git ls-remote --tags origin "refs/tags/v${{ steps.version.outputs.VERSION }}" | grep -q .; then
+            echo "EXISTS=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "EXISTS=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Create and push tag
+        if: steps.tag_check.outputs.EXISTS == 'false'
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag "${{ steps.version.outputs.TAG }}"
+          git push origin "${{ steps.version.outputs.TAG }}"

@@ -6,6 +6,10 @@ on:
     tags:
       - 'v[0-9]+.[0-9]+.[0-9]+'
   workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to release (e.g. 0.5.0) — must match an existing tag'
+        required: true
 
 permissions:
   contents: write
@@ -27,10 +31,13 @@ jobs:
         with:
           dotnet-version: '8.0.x'
 
-      - name: Extract version from tag
+      - name: Extract version
         id: version
         shell: bash
-        run: echo "VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+        run: |
+          # Use explicit input when dispatched manually, otherwise strip 'v' from the tag name
+          VERSION="${{ inputs.version || github.ref_name }}"
+          echo "VERSION=${VERSION#v}" >> "$GITHUB_OUTPUT"
 
       - name: Publish single-file executable
         shell: bash
@@ -78,7 +85,7 @@ jobs:
 
       - name: Rename firmware binary
         run: |
-          VERSION="${GITHUB_REF_NAME}"
+          VERSION="${{ inputs.version && format('v{0}', inputs.version) || github.ref_name }}"
           mv firmware/build/BusyLight.ino.bin "firmware/build/BusyLight-firmware-${VERSION}.bin"
 
       - name: Upload firmware artifact

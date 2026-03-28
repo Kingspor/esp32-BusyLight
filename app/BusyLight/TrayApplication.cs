@@ -58,8 +58,10 @@ public sealed class TrayApplication : ApplicationContext
 
     // ── Runtime state ─────────────────────────────────────────────────────────
 
-    private string  _currentPresence = "PresenceUnknown";
-    private string? _activeOverride;   // null = follow Teams; non-null = manual override key
+    private string      _currentPresence   = "PresenceUnknown";
+    private string?     _activeOverride;        // null = follow Teams; non-null = manual override key
+    private LedCommand? _lastActiveCommand;     // last non-Off command sent; kept across disabled statuses
+    private bool        _isScreenLocked;        // true while the Windows session is locked
 
     // ── Constructor ───────────────────────────────────────────────────────────
 
@@ -80,6 +82,9 @@ public sealed class TrayApplication : ApplicationContext
 
         // Double-click opens the combined status/settings window
         _notifyIcon.DoubleClick += (_, _) => ShowSettingsForm();
+
+        // Track Windows session lock/unlock to optionally keep LEDs unchanged while locked
+        Microsoft.Win32.SystemEvents.SessionSwitch += OnSessionSwitch;
 
         // Kick off async initialisation (load config, authenticate, start services)
         _ = Task.Run(InitialiseAsync);
@@ -324,11 +329,12 @@ public sealed class TrayApplication : ApplicationContext
                 RecordPresenceChange(availability, isOverride: false);
         });
 
-        // Do not change LEDs while an override is active
+        // Do not change LEDs while an override is active or while screen is locked
         if (_activeOverride is null)
         {
             UpdateTrayIcon(availability);
-            SendLedCommand(availability);
+            if (!(_isScreenLocked && _settings.Polling.KeepLedsOnScreenLock))
+                SendLedCommand(availability);
         }
     }
 
@@ -408,6 +414,22 @@ public sealed class TrayApplication : ApplicationContext
     private void OnServiceError(object? sender, string message)
         => ShowError(message);
 
+    private void OnSessionSwitch(object sender, Microsoft.Win32.SessionSwitchEventArgs e)
+    {
+        if (e.Reason == Microsoft.Win32.SessionSwitchReason.SessionLock)
+        {
+            _isScreenLocked = true;
+            Services.LogService.Log("[TrayApp] Session locked — LEDs kept as-is.");
+        }
+        else if (e.Reason == Microsoft.Win32.SessionSwitchReason.SessionUnlock)
+        {
+            _isScreenLocked = false;
+            Services.LogService.Log("[TrayApp] Session unlocked — restoring LED state.");
+            if (_settings.Polling.KeepLedsOnScreenLock)
+                SendLedCommand(_activeOverride ?? _currentPresence);
+        }
+    }
+
     // ── LED command dispatch ──────────────────────────────────────────────────
 
     private void SendLedCommand(string presenceKey)
@@ -431,9 +453,14 @@ public sealed class TrayApplication : ApplicationContext
             ? mapped
             : presenceKey;
 
-        return _settings.PresenceMap.TryGetValue(effectiveKey, out var ps) && ps.Enabled
-            ? LedCommand.FromPresenceSettings(ps, _settings.Polling.BrightnessCap)
-            : LedCommand.Off;
+        if (_settings.PresenceMap.TryGetValue(effectiveKey, out var ps) && ps.Enabled)
+        {
+            _lastActiveCommand = LedCommand.FromPresenceSettings(ps, _settings.Polling.BrightnessCap);
+            return _lastActiveCommand;
+        }
+
+        // Disabled or unknown status → keep the last active LED state instead of turning off
+        return _lastActiveCommand ?? LedCommand.Off;
     }
 
     // ── Tray icon ─────────────────────────────────────────────────────────────
@@ -687,6 +714,7 @@ public sealed class TrayApplication : ApplicationContext
 
     private void ExitApplication()
     {
+        Microsoft.Win32.SystemEvents.SessionSwitch -= OnSessionSwitch;
         _graphService?.StopPolling();
         _graphService?.Dispose();
         _graphService = null;

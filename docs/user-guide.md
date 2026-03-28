@@ -136,6 +136,7 @@ Each row represents one Teams presence status. You can configure:
 | **Teams-Abfrageintervall** | How often to poll Teams (seconds, default 30) |
 | **BLE Retry-Intervall** | How often to retry BLE reconnect (seconds, default 10) |
 | **Maximale Helligkeit** | Global brightness cap 0–100 % |
+| **LEDs bei gesperrtem Bildschirm nicht ändern** | When checked (default), the LED state is frozen while your Windows session is locked. The correct color is restored automatically when you unlock. Uncheck to let Teams presence changes update the LEDs even while locked. |
 
 ### Tab: BLE-Gerät
 
@@ -172,7 +173,7 @@ When closing with unsaved changes, you will be asked whether to save.
 
 - Check the tray icon — if it's gray, Teams presence may be "Offline" or unknown
 - Right-click the tray → **Status jetzt abrufen** to force a refresh
-- Check **Tab: Präsenz** — the row for the current status must have **Aktiv** checked
+- Check **Tab: Präsenz** — the row for the current status must have **Aktiv** checked. If a status is disabled, the LEDs keep the last active color rather than turning off.
 
 ### The LED briefly shows the wrong color when reconnecting
 

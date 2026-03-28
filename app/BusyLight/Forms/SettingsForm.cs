@@ -134,11 +134,12 @@ public sealed partial class SettingsForm : Form
 
         // Wire dirty-tracking for general controls AFTER initial load
         // so loading values doesn't immediately flag the form as dirty.
-        nudGraphInterval.ValueChanged += (_, _) => MarkDirty();
-        nudBleRetry.ValueChanged      += (_, _) => MarkDirty();
-        nudBrightnessCap.ValueChanged += (_, _) => MarkDirty();
-        txtClientId.TextChanged       += (_, _) => MarkDirty();
-        txtTenantId.TextChanged       += (_, _) => MarkDirty();
+        nudGraphInterval.ValueChanged    += (_, _) => MarkDirty();
+        nudBleRetry.ValueChanged         += (_, _) => MarkDirty();
+        nudBrightnessCap.ValueChanged    += (_, _) => MarkDirty();
+        chkKeepLedsOnLock.CheckedChanged += (_, _) => MarkDirty();
+        txtClientId.TextChanged          += (_, _) => MarkDirty();
+        txtTenantId.TextChanged          += (_, _) => MarkDirty();
 
         // BLE tab buttons
         btnStopScan.Click += (_, _) => StopScanRequested?.Invoke(this, EventArgs.Empty);
@@ -350,9 +351,10 @@ public sealed partial class SettingsForm : Form
             txtTenantId.Text = MaskId(_tenantIdFull);
 
             // Polling
-            nudGraphInterval.Value = Math.Clamp(s.Polling.GraphIntervalSeconds,    5,    3600);
-            nudBleRetry.Value      = Math.Clamp(s.Polling.BleRetryIntervalSeconds, 2,     300);
-            nudBrightnessCap.Value = Math.Clamp((int)(s.Polling.BrightnessCap * 100f), 0, 100);
+            nudGraphInterval.Value    = Math.Clamp(s.Polling.GraphIntervalSeconds,    5,    3600);
+            nudBleRetry.Value         = Math.Clamp(s.Polling.BleRetryIntervalSeconds, 2,     300);
+            nudBrightnessCap.Value    = Math.Clamp((int)(s.Polling.BrightnessCap * 100f), 0, 100);
+            chkKeepLedsOnLock.Checked = s.Polling.KeepLedsOnScreenLock;
 
             // Presence rows — byte 0–255 → percent 0–100
             foreach (var (key, ps) in s.PresenceMap)
@@ -414,6 +416,7 @@ public sealed partial class SettingsForm : Form
         _settings.Polling.GraphIntervalSeconds    = (int)nudGraphInterval.Value;
         _settings.Polling.BleRetryIntervalSeconds = (int)nudBleRetry.Value;
         _settings.Polling.BrightnessCap           = (float)nudBrightnessCap.Value / 100f;
+        _settings.Polling.KeepLedsOnScreenLock    = chkKeepLedsOnLock.Checked;
 
         // Presence map — ToDo 3: percent 0–100 → byte 0–255
         foreach (var (key, row) in _presenceRows)

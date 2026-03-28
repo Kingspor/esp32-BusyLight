@@ -1,6 +1,6 @@
 # ARC42 Architecture Documentation — BusyLight
 
-> Version 0.1 · March 2026
+> Version 0.2 · March 2026
 
 ---
 
@@ -196,7 +196,15 @@ Registry (optional):
 ```
 
 The published app is a **single self-contained `.exe`** (~80 MB, no .NET install required).
-CI publishes via `dotnet publish -p:PublishProfile=Release-win-x64` on git tag push.
+
+**Release pipeline** (two workflows in `.github/workflows/`):
+
+| Workflow | Trigger | Action |
+|---|---|---|
+| `auto-release.yml` | Push to `main` | Reads `<Version>` from `BusyLight.csproj`; creates `vX.Y.Z` tag if it does not exist yet; skips if tag already exists |
+| `release.yml` | `vX.Y.Z` tag push | Builds app + firmware, creates GitHub Release with assets |
+
+Normal release flow: bump `<Version>` in `BusyLight.csproj` → merge PR → release is created automatically. Tags can also be pushed manually to trigger `release.yml` directly.
 
 ---
 
@@ -245,6 +253,9 @@ A single read-only byte characteristic (`feda0103-…`) exposes the firmware's p
 |---------|:----------------:|-------|
 | v0.1.0  | 1                | Initial release |
 | v0.2.0  | 1                | App-only update (status bar, docs link); firmware unchanged |
+| v0.3.0  | 1                | App-only update (BLE fixes, logging, UI improvements); firmware unchanged |
+| v0.4.0  | 1                | App-only update (battery monitoring, history charts); firmware unchanged |
+| v0.5.0  | 1                | App-only update (keep LEDs on disabled status / screen lock); firmware unchanged |
 
 **Rules for incrementing `PROTOCOL_VERSION` (in `firmware/BusyLight/config.h`):**
 
@@ -299,12 +310,14 @@ See `docs/wpf-migration.md` for detailed analysis.
 | ID | Requirement | Measure |
 |---|---|---|
 | Q-1 | Reconnects within `BleRetryIntervalSeconds` after BLE dropout | PeriodicTimer retry loop |
-| Q-2 | LEDs always reflect current Teams presence after reconnect | `_lastSentCommand = null` forces re-send |
+| Q-2 | LEDs always reflect current Teams presence after reconnect | `OnBleConnectionChanged(Connected)` calls `SendLedCommandTo` to re-sync immediately |
 | Q-3 | No token prompts after initial login | DPAPI-cached MSAL silent acquisition |
 | Q-4 | Settings changes never apply until "Speichern" is clicked | `_isDirty` flag; `ReadFromUi()` only called on explicit save |
 | Q-5 | No LED flash when opening settings | `_loading` guard in `FireLivePreview` |
 | Q-6 | Saving settings does not interrupt BLE communication | `ApplyNewSettings` restarts BLE only when device address changes (ADR-005) |
 | Q-7 | BLE status always correct when settings window opens | `UpdateBleStatus(CurrentState)` called after `Show()`, overwriting `LoadToUi` placeholder |
+| Q-8 | Disabled presence status does not turn off LEDs | `BuildCommand` returns `_lastActiveCommand` when `ps.Enabled = false`; falls back to Off only if nothing was ever sent |
+| Q-9 | LEDs stay unchanged while Windows session is locked | `SystemEvents.SessionSwitch` handler sets `_isScreenLocked`; `OnPresenceChanged` skips `SendLedCommand` while locked; command is re-sent on unlock |
 
 ---
 

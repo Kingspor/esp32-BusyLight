@@ -38,7 +38,7 @@ arduino-cli compile --fqbn esp32:esp32:esp32c3 --output-dir firmware/build firmw
 ```
 
 ### CI/CD
-Push a tag matching `v*.*.*` → GitHub Actions builds both app (`BusyLight.exe`) and firmware (`.bin`), creates a GitHub Release.
+Merge a PR to `main` with a bumped `<Version>` in `BusyLight.csproj` → `auto-release.yml` detects the new version, creates the matching `vX.Y.Z` tag, which triggers `release.yml` → builds app (`BusyLight.exe`) and firmware (`.bin`) and creates a GitHub Release. Merges that do not change the version are skipped (idempotent tag check). Tags can still be pushed manually to trigger a release directly.
 
 ## Architecture
 

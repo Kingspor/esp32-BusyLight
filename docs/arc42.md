@@ -196,7 +196,15 @@ Registry (optional):
 ```
 
 The published app is a **single self-contained `.exe`** (~80 MB, no .NET install required).
-CI publishes via `dotnet publish -p:PublishProfile=Release-win-x64` on git tag push.
+
+**Release pipeline** (two workflows in `.github/workflows/`):
+
+| Workflow | Trigger | Action |
+|---|---|---|
+| `auto-release.yml` | Push to `main` | Reads `<Version>` from `BusyLight.csproj`; creates `vX.Y.Z` tag if it does not exist yet; skips if tag already exists |
+| `release.yml` | `vX.Y.Z` tag push | Builds app + firmware, creates GitHub Release with assets |
+
+Normal release flow: bump `<Version>` in `BusyLight.csproj` → merge PR → release is created automatically. Tags can also be pushed manually to trigger `release.yml` directly.
 
 ---
 

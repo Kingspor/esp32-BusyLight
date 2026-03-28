@@ -48,6 +48,9 @@ jobs:
 
       - name: Trigger release workflow
         if: steps.tag_check.outputs.EXISTS == 'false'
-        run: gh workflow run release.yml --ref "${{ steps.version.outputs.TAG }}"
+        run: |
+          gh workflow run release.yml \
+            --ref main \
+            -f version="${{ steps.version.outputs.VERSION }}"
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

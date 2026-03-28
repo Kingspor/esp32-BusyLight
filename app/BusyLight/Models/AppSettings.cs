@@ -78,6 +78,12 @@ public class PollingSettings
     /// Default: 3400 mV (≈ 7 % SoC for a Li-Ion 18650).
     /// </summary>
     public int BatteryWarningVoltageMv { get; set; } = 3400;
+
+    /// <summary>
+    /// When true the LED state is not changed while the Windows session is locked.
+    /// The current command is re-sent on unlock.
+    /// </summary>
+    public bool KeepLedsOnScreenLock { get; set; } = true;
 }
 
 /// <summary>

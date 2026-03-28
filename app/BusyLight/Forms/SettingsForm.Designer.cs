@@ -36,6 +36,7 @@ partial class SettingsForm
         nudBleRetry      = new NumericUpDown();
         lblBrightnessCap = new Label();
         nudBrightnessCap = new NumericUpDown();
+        chkKeepLedsOnLock = new CheckBox();
         tabPraesenz      = new TabPage();
         lblPresenceHint  = new Label();
         chkLivePreview   = new CheckBox();
@@ -191,9 +192,10 @@ partial class SettingsForm
         grpPolling.Controls.Add(nudBleRetry);
         grpPolling.Controls.Add(lblBrightnessCap);
         grpPolling.Controls.Add(nudBrightnessCap);
+        grpPolling.Controls.Add(chkKeepLedsOnLock);
         grpPolling.Location = new Point(8, 108);
         grpPolling.Name = "grpPolling";
-        grpPolling.Size = new Size(686, 116);
+        grpPolling.Size = new Size(686, 142);
         grpPolling.TabIndex = 1;
         grpPolling.TabStop = false;
         grpPolling.Text = "Polling & Helligkeit";
@@ -238,6 +240,14 @@ partial class SettingsForm
         nudBrightnessCap.Size = new Size(80, 23);
         nudBrightnessCap.TabIndex = 5;
         nudBrightnessCap.Value = new decimal(new int[] { 60, 0, 0, 0 });
+
+        chkKeepLedsOnLock.AutoSize = true;
+        chkKeepLedsOnLock.Checked = true;
+        chkKeepLedsOnLock.CheckState = CheckState.Checked;
+        chkKeepLedsOnLock.Location = new Point(10, 114);
+        chkKeepLedsOnLock.Name = "chkKeepLedsOnLock";
+        chkKeepLedsOnLock.TabIndex = 6;
+        chkKeepLedsOnLock.Text = "LEDs bei gesperrtem Bildschirm nicht ändern";
 
         // tabPraesenz
         tabPraesenz.Controls.Add(lblPresenceHint);
@@ -498,6 +508,7 @@ partial class SettingsForm
     private System.Windows.Forms.NumericUpDown          nudBleRetry          = default!;
     private System.Windows.Forms.Label                  lblBrightnessCap     = default!;
     private System.Windows.Forms.NumericUpDown          nudBrightnessCap     = default!;
+    private System.Windows.Forms.CheckBox               chkKeepLedsOnLock    = default!;
 
     private System.Windows.Forms.Label                  lblPresenceHint      = default!;
     private System.Windows.Forms.CheckBox               chkLivePreview       = default!;

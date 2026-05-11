@@ -269,6 +269,98 @@
       font-size: 14px;
       line-height: 1.5;
     }
+
+    /* ── Battery display ───────────────────────────────── */
+    .status-text-group { display: flex; flex-direction: column; gap: 2px; }
+
+    .battery-text {
+      font-size: 12px;
+      color: var(--text-muted);
+    }
+    .battery-text.low { color: #f59e0b; }
+
+    /* ── Preset edit button ────────────────────────────── */
+    .preset-wrap { position: relative; }
+
+    .preset-edit-btn {
+      position: absolute;
+      top: 5px;
+      right: 5px;
+      width: 24px;
+      height: 24px;
+      border: none;
+      border-radius: 5px;
+      background: rgba(0,0,0,0.35);
+      color: rgba(255,255,255,0.85);
+      font-size: 13px;
+      line-height: 1;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 0;
+      z-index: 1;
+      transition: background 0.15s;
+    }
+    .preset-edit-btn:active { background: rgba(0,0,0,0.6); }
+
+    /* ── Edit modal (bottom sheet) ─────────────────────── */
+    #editBackdrop {
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.55);
+      display: flex;
+      align-items: flex-end;
+      z-index: 100;
+    }
+    #editBackdrop[hidden] { display: none; }
+
+    .edit-sheet {
+      background: var(--surface);
+      border-radius: var(--radius) var(--radius) 0 0;
+      padding: 20px 16px calc(env(safe-area-inset-bottom, 0px) + 20px);
+      width: 100%;
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+      max-height: 90dvh;
+      overflow-y: auto;
+    }
+
+    .edit-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .edit-close {
+      border: none;
+      background: var(--surface2);
+      color: var(--text);
+      width: 30px;
+      height: 30px;
+      border-radius: 50%;
+      font-size: 13px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .text-input {
+      width: 100%;
+      background: var(--surface2);
+      border: none;
+      border-radius: 8px;
+      padding: 12px;
+      font-size: 15px;
+      color: var(--text);
+      outline: none;
+    }
+    .text-input:focus { box-shadow: 0 0 0 2px var(--accent); }
+
+    .edit-footer { display: flex; gap: 10px; }
+    .btn-secondary { background: var(--surface2); color: var(--text); }
   </style>
 </head>
 <body>
@@ -288,7 +380,10 @@
   <div class="status-bar">
     <div class="status-indicator">
       <div class="dot" id="dot"></div>
-      <span id="statusText">Nicht verbunden</span>
+      <div class="status-text-group">
+        <span id="statusText">Nicht verbunden</span>
+        <span id="batteryText" hidden class="battery-text"></span>
+      </div>
     </div>
     <button class="btn btn-primary" id="connectBtn">Verbinden</button>
   </div>
@@ -330,6 +425,52 @@
     </div>
 
     <button class="btn btn-primary" id="sendBtn" disabled>Senden</button>
+  </div>
+
+  <!-- Preset edit bottom sheet -->
+  <div id="editBackdrop" hidden>
+    <div class="edit-sheet">
+      <div class="edit-header">
+        <span class="section-title">Preset bearbeiten</span>
+        <button class="edit-close" id="editClose">✕</button>
+      </div>
+
+      <div class="form-row">
+        <div class="form-label">Name</div>
+        <input type="text" id="editLabel" class="text-input" maxlength="24">
+      </div>
+
+      <div class="form-row">
+        <div class="form-label">Farbe</div>
+        <input type="color" id="editColor">
+      </div>
+
+      <div class="form-row">
+        <div class="form-label">
+          Helligkeit
+          <span class="value" id="editBrightnessVal"></span>
+        </div>
+        <input type="range" id="editBrightness" min="0" max="255">
+      </div>
+
+      <div class="form-row">
+        <div class="form-label">Modus</div>
+        <div class="mode-grid" id="editModeGrid"></div>
+      </div>
+
+      <div class="form-row">
+        <div class="form-label">
+          Geschwindigkeit
+          <span class="value" id="editSpeedVal"></span>
+        </div>
+        <input type="range" id="editSpeed" min="0" max="255">
+      </div>
+
+      <div class="edit-footer">
+        <button class="btn btn-primary" id="editSave" style="flex:1">Speichern</button>
+        <button class="btn btn-secondary" id="editReset" style="flex:0 0 auto;width:auto;padding-inline:18px">↺ Standard</button>
+      </div>
+    </div>
   </div>
 
   <div id="toast"></div>

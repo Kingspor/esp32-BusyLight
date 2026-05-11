@@ -1,9 +1,9 @@
 import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  hexToRgb, buildPacket, percentLabel,
+  hexToRgb, rgbToHex, buildPacket, percentLabel, parseTelemetry,
   PRESETS, MODES, DEFAULT_BRIGHTNESS,
-  SERVICE_UUID, LED_CHAR_UUID,
+  SERVICE_UUID, LED_CHAR_UUID, TELEMETRY_CHAR_UUID,
 } from '../busylight-core.js';
 
 // ── hexToRgb ──────────────────────────────────────────────────────────────────
@@ -132,6 +132,58 @@ describe('MODES', () => {
   });
 });
 
+// ── rgbToHex ──────────────────────────────────────────────────────────────────
+describe('rgbToHex', () => {
+  test('converts available-green', () => {
+    assert.equal(rgbToHex(0, 200, 0), '#00c800');
+  });
+  test('converts busy-red', () => {
+    assert.equal(rgbToHex(200, 0, 0), '#c80000');
+  });
+  test('converts white', () => {
+    assert.equal(rgbToHex(255, 255, 255), '#ffffff');
+  });
+  test('converts black', () => {
+    assert.equal(rgbToHex(0, 0, 0), '#000000');
+  });
+  test('is the inverse of hexToRgb', () => {
+    const original = '#ffaa00';
+    const { r, g, b } = hexToRgb(original);
+    assert.equal(rgbToHex(r, g, b), original);
+  });
+});
+
+// ── parseTelemetry ────────────────────────────────────────────────────────────
+describe('parseTelemetry', () => {
+  function makeDV(bytes) {
+    return new DataView(new Uint8Array(bytes).buffer);
+  }
+
+  test('parses voltage low byte correctly', () => {
+    // 3700 mV = 0x0E74 → lo=0x74, hi=0x0E
+    const { mv } = parseTelemetry(makeDV([0x74, 0x0E, 40]));
+    assert.equal(mv, 3700);
+  });
+
+  test('parses soc percent', () => {
+    const { soc } = parseTelemetry(makeDV([0x74, 0x0E, 73]));
+    assert.equal(soc, 73);
+  });
+
+  test('full charge: 4200 mV, 100 %', () => {
+    const mv4200 = 4200; // 0x1068 → lo=0x68, hi=0x10
+    const { mv, soc } = parseTelemetry(makeDV([0x68, 0x10, 100]));
+    assert.equal(mv, mv4200);
+    assert.equal(soc, 100);
+  });
+
+  test('empty: 0 mV, 0 %', () => {
+    const { mv, soc } = parseTelemetry(makeDV([0, 0, 0]));
+    assert.equal(mv, 0);
+    assert.equal(soc, 0);
+  });
+});
+
 // ── Constants ─────────────────────────────────────────────────────────────────
 describe('BLE UUIDs', () => {
   const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
@@ -144,8 +196,17 @@ describe('BLE UUIDs', () => {
     assert.match(LED_CHAR_UUID, UUID_RE);
   });
 
-  test('SERVICE_UUID and LED_CHAR_UUID share the same base (feda01xx)', () => {
+  test('TELEMETRY_CHAR_UUID is a valid UUID', () => {
+    assert.match(TELEMETRY_CHAR_UUID, UUID_RE);
+  });
+
+  test('all UUIDs share the same base (feda01xx)', () => {
     assert.ok(SERVICE_UUID.startsWith('feda01'));
     assert.ok(LED_CHAR_UUID.startsWith('feda01'));
+    assert.ok(TELEMETRY_CHAR_UUID.startsWith('feda01'));
+  });
+
+  test('TELEMETRY_CHAR_UUID differs from LED_CHAR_UUID', () => {
+    assert.notEqual(TELEMETRY_CHAR_UUID, LED_CHAR_UUID);
   });
 });

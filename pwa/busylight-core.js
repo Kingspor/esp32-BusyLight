@@ -1,7 +1,8 @@
 // Pure logic — no DOM, no BLE. Importable in both the browser and Node.js tests.
 
-export const SERVICE_UUID  = 'feda0100-51a7-4fb7-a27b-c720bef16ef7';
-export const LED_CHAR_UUID = 'feda0101-51a7-4fb7-a27b-c720bef16ef7';
+export const SERVICE_UUID       = 'feda0100-51a7-4fb7-a27b-c720bef16ef7';
+export const LED_CHAR_UUID      = 'feda0101-51a7-4fb7-a27b-c720bef16ef7';
+export const TELEMETRY_CHAR_UUID = 'feda0102-51a7-4fb7-a27b-c720bef16ef7';
 
 // Brightness cap default: 153 / 255 ≈ 60 %, mirrors PollingSettings.BrightnessCap = 0.6
 export const DEFAULT_BRIGHTNESS = 153;
@@ -54,4 +55,62 @@ export function buildPacket(r, g, b, brightness, mode, speed) {
  */
 export function percentLabel(value, max) {
   return Math.round((value / max) * 100) + ' %';
+}
+
+/**
+ * Convert r, g, b byte values to a CSS hex color string.
+ * @param {number} r @param {number} g @param {number} b
+ * @returns {string}  e.g. "#00c800"
+ */
+export function rgbToHex(r, g, b) {
+  return '#' + [r, g, b].map(v => v.toString(16).padStart(2, '0')).join('');
+}
+
+/**
+ * Parse the 3-byte telemetry DataView from the firmware.
+ * Byte layout: [voltage_mv_lo, voltage_mv_hi, soc_percent]
+ * @param {DataView} dataView
+ * @returns {{ mv: number, soc: number }}
+ */
+export function parseTelemetry(dataView) {
+  const mv  = dataView.getUint8(0) | (dataView.getUint8(1) << 8);
+  const soc = dataView.getUint8(2);
+  return { mv, soc };
+}
+
+// ── Preset persistence ────────────────────────────────────────────────────────
+
+const STORAGE_KEY = 'busylight-presets';
+
+/** Load presets from localStorage, merged over the built-in defaults. */
+export function loadPresets() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}');
+    return PRESETS.map(p => saved[p.id] ? { ...p, ...saved[p.id] } : { ...p });
+  } catch {
+    return PRESETS.map(p => ({ ...p }));
+  }
+}
+
+/** Persist a single edited preset to localStorage. */
+export function savePreset(preset) {
+  try {
+    const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}');
+    saved[preset.id] = preset;
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(saved));
+  } catch {}
+}
+
+/**
+ * Remove a preset override from localStorage, returning the original default.
+ * @param {string} id
+ * @returns {object} The default preset object
+ */
+export function resetPreset(id) {
+  try {
+    const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}');
+    delete saved[id];
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(saved));
+  } catch {}
+  return { ...PRESETS.find(p => p.id === id) };
 }

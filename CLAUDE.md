@@ -13,6 +13,7 @@ BusyLight is an ESP32-based status light that shows Microsoft Teams presence via
 ```
 firmware/BusyLight/       # ESP32-C3 Arduino sketch
 app/BusyLight/            # .NET 8 WinForms Windows app
+pwa/                      # Web Bluetooth PWA for manual control (iOS via Bluefy)
 docs/                     # arc42 architecture docs, user guide, WPF migration notes
 .github/workflows/        # CI/CD (release.yml) triggered by version tags
 ```
@@ -37,6 +38,17 @@ Requires Windows 10 build 22621 (22H2) or later. No test projects exist — the 
 arduino-cli compile --fqbn esp32:esp32:esp32c3 --output-dir firmware/build firmware/BusyLight
 ```
 
+### PWA (Web Bluetooth)
+```bash
+cd pwa
+npm test                                  # node:test suite over busylight-core.js
+python3 -m http.server 8080               # local preview (Web Bluetooth needs https or localhost)
+```
+Deployed to GitHub Pages by `deploy-pwa.yml` on every push to `main` — it has no version
+of its own and is not part of the `vX.Y.Z` release flow. Only `busylight-core.js`
+(pure logic, no DOM/BLE) is unit-tested; `app.js` is DOM- and BLE-bound and tested
+manually on the phone.
+
 ### CI/CD
 Merge a PR to `main` with a bumped `<Version>` in `BusyLight.csproj` → `auto-release.yml` detects the new version, creates the matching `vX.Y.Z` tag, which triggers `release.yml` → builds app (`BusyLight.exe`) and firmware (`.bin`) and creates a GitHub Release. Merges that do not change the version are skipped (idempotent tag check). Tags can still be pushed manually to trigger a release directly.
 
@@ -58,7 +70,26 @@ Merge a PR to `main` with a bumped `<Version>` in `BusyLight.csproj` → `auto-r
 
 - **Non-blocking animation** (`LedController.cpp`): `update()` advances state each `loop()` iteration using `millis()` — no blocking delays.
 - **BLE GATT server** (`GattServer.cpp`): Advertises service, parses 6-byte LED command packets, updates telemetry characteristic.
+- **Disconnect hold** (`BusyLight.ino`): on link loss the ring keeps animating the last
+  received command for `LED_HOLD_AFTER_DISCONNECT_MS` (30 min) instead of blanking, so a
+  dropped connection is never misread as "available". The internal status LED blinks
+  throughout; after the hold expires the ring goes dark to protect the battery.
 - **`config.h`**: Single source of truth for BLE UUIDs, pin definitions, protocol version.
+
+### PWA
+
+- **`busylight-core.js`**: All pure logic — UUIDs, presets, packet building, telemetry
+  parsing, `localStorage` persistence, reconnect backoff. No DOM, no BLE, so it is
+  importable in Node for tests.
+- **`app.js`**: DOM wiring and Web Bluetooth. Owns the connection state machine.
+- **Auto-reconnect**: the last device's opaque Web Bluetooth ID is stored in
+  `localStorage`. On start-up `navigator.bluetooth.getDevices()` finds it again among
+  the origin's permitted devices and connects without the picker. Unexpected drops
+  retry with a growing delay (1 s → 30 s cap) until the device is back or the user
+  presses "Stopp"; `visibilitychange` triggers an immediate retry, because iOS
+  suspends background timers. `getDevices()` is not universally available (Chrome
+  needs `chrome://flags/#enable-web-bluetooth-new-permissions-backend`) — without it
+  the picker is shown once per session and only in-session drops recover on their own.
 
 ### Protocol
 
@@ -95,4 +126,6 @@ Protocol version (currently `1`) on read-only characteristic `feda0103-…` — 
 | `app/BusyLight/Services/GraphService.cs` | MSAL auth, Graph API polling |
 | `app/BusyLight/Models/LedCommand.cs` | 6-byte packet model |
 | `app/BusyLight/Models/AppSettings.cs` | Strongly-typed config & presence→LED mapping |
+| `pwa/busylight-core.js` | PWA pure logic (packets, presets, persistence, backoff) |
+| `pwa/app.js` | PWA DOM wiring, Web Bluetooth, auto-reconnect state machine |
 | `docs/arc42.md` | Full architecture documentation |

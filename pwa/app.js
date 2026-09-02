@@ -4,6 +4,7 @@ import {
   hexToRgb, rgbToHex, buildPacket, percentLabel, parseTelemetry,
   DEFAULT_BRIGHTNESS,
   loadPresets, savePreset, resetPreset,
+  saveLastDevice, loadLastDevice, clearLastDevice, reconnectDelayMs,
 } from './busylight-core.js';
 
 // ── State ────────────────────────────────────────────────────────────────────
@@ -15,6 +16,15 @@ let toastTimer     = null;
 let activePresets  = loadPresets();
 let editingId      = null;
 let editModeId     = 0;
+
+// ── Reconnect state ──────────────────────────────────────────────────────────
+// The link drops for all sorts of everyday reasons — a pocketed phone, a locked
+// screen, someone walking past.  Retries run until the device is back or the
+// user stops them, so a drop no longer means walking over to the light.
+let reconnectTimer   = null;
+let reconnectAttempt = 0;
+let reconnecting     = false;
+let userDisconnected = false;  // true only after the user pressed "Trennen"/"Stopp"
 
 // ── Boot ─────────────────────────────────────────────────────────────────────
 function init() {
@@ -44,9 +54,16 @@ function init() {
     setLabel('editSpeedVal', percentLabel(document.getElementById('editSpeed').value, 255))
   );
 
+  // iOS suspends background JS, so a pending retry can be badly overdue by the
+  // time the app is reopened — retry on foreground instead of waiting for it.
+  document.addEventListener('visibilitychange', onVisibilityChange);
+
   if ('serviceWorker' in navigator) {
     navigator.serviceWorker.register('sw.js').catch(() => {});
   }
+
+  // Try to pick the previous session's device back up without the picker.
+  void restoreLastDevice();
 }
 
 function buildPresetGrid() {
@@ -117,79 +134,208 @@ function wireSliders() {
 // ── Connection ────────────────────────────────────────────────────────────────
 async function toggleConnection() {
   if (bleDevice?.gatt?.connected) {
+    // Deliberate disconnect: suppress the retry that onDisconnected would start.
+    userDisconnected = true;
+    cancelReconnect();
     bleDevice.gatt.disconnect();
-  } else {
-    await connect();
+    return;
   }
+
+  if (reconnecting) {
+    // Automatic retries are running — the button stops them.
+    userDisconnected = true;
+    cancelReconnect();
+    setConnectionState('disconnected');
+    showToast('Automatische Verbindung gestoppt');
+    return;
+  }
+
+  await connect();
 }
 
+/** Show the browser's device picker and connect to the chosen device. */
 async function connect() {
   try {
     setConnectionState('connecting');
 
-    bleDevice = await navigator.bluetooth.requestDevice({
+    const device = await navigator.bluetooth.requestDevice({
       filters:          [{ namePrefix: 'BusyLight' }],
       optionalServices: [SERVICE_UUID],
     });
 
-    bleDevice.addEventListener('gattserverdisconnected', onDisconnected);
-
-    const server  = await bleDevice.gatt.connect();
-    const service = await server.getPrimaryService(SERVICE_UUID);
-    ledChar        = await service.getCharacteristic(LED_CHAR_UUID);
-
-    try {
-      telemetryChar = await service.getCharacteristic(TELEMETRY_CHAR_UUID);
-      const initial = await telemetryChar.readValue();
-      updateBattery(parseTelemetry(initial));
-      await telemetryChar.startNotifications();
-      telemetryChar.addEventListener('characteristicvaluechanged', e =>
-        updateBattery(parseTelemetry(e.target.value))
-      );
-    } catch {
-      telemetryChar = null;
-    }
-
-    setConnectionState('connected', bleDevice.name);
-    showToast(`Verbunden mit ${bleDevice.name}`);
+    await openDevice(device);
+    showToast(`Verbunden mit ${deviceLabel(device)}`);
   } catch (err) {
-    ledChar       = null;
+    handleConnectFailure(err);
+  }
+}
+
+/**
+ * Connect to an already-known BluetoothDevice and wire up its characteristics.
+ * Shared by the picker flow, the start-up restore and every reconnect attempt.
+ */
+async function openDevice(device) {
+  bleDevice = device;
+  // Re-adding an identical listener reference is a no-op per the DOM spec, so
+  // this stays safe across repeated reconnects to the same device object.
+  device.addEventListener('gattserverdisconnected', onDisconnected);
+
+  const server  = await device.gatt.connect();
+  const service = await server.getPrimaryService(SERVICE_UUID);
+  ledChar       = await service.getCharacteristic(LED_CHAR_UUID);
+
+  await subscribeTelemetry(service);
+
+  userDisconnected = false;
+  reconnectAttempt = 0;
+  cancelReconnect();
+  saveLastDevice(device);
+  setConnectionState('connected', deviceLabel(device));
+}
+
+/** Telemetry is optional — older firmware has no battery characteristic. */
+async function subscribeTelemetry(service) {
+  try {
+    telemetryChar = await service.getCharacteristic(TELEMETRY_CHAR_UUID);
+    updateBattery(parseTelemetry(await telemetryChar.readValue()));
+    await telemetryChar.startNotifications();
+    telemetryChar.addEventListener('characteristicvaluechanged', e =>
+      updateBattery(parseTelemetry(e.target.value))
+    );
+  } catch {
     telemetryChar = null;
-    bleDevice     = null;
-    setConnectionState('disconnected');
-    // NotFoundError / NotAllowedError = user cancelled picker — no toast needed
-    if (err.name !== 'NotFoundError' && err.name !== 'NotAllowedError') {
-      showToast(err.message || 'Verbindungsfehler', true);
-    }
+  }
+}
+
+function handleConnectFailure(err) {
+  ledChar       = null;
+  telemetryChar = null;
+  bleDevice     = null;
+  setConnectionState('disconnected');
+  // NotFoundError / NotAllowedError = user cancelled picker — no toast needed
+  if (err.name !== 'NotFoundError' && err.name !== 'NotAllowedError') {
+    showToast(err.message || 'Verbindungsfehler', true);
   }
 }
 
 function onDisconnected() {
   ledChar       = null;
   telemetryChar = null;
-  setConnectionState('disconnected');
   clearActivePreset();
-  showToast('Verbindung getrennt');
+
+  if (userDisconnected) {
+    setConnectionState('disconnected');
+    showToast('Verbindung getrennt');
+    return;
+  }
+
+  // Unexpected drop.  The ring keeps showing the last status (the firmware holds
+  // it for LED_HOLD_AFTER_DISCONNECT_MS), so we only need the link back.
+  showToast('Verbindung verloren – verbinde neu …', true);
+  scheduleReconnect();
+}
+
+/** Queue the next reconnect attempt with a growing delay, capped at 30 s. */
+function scheduleReconnect() {
+  if (!bleDevice || userDisconnected) return;
+
+  clearTimeout(reconnectTimer);
+  const delay = reconnectDelayMs(reconnectAttempt);
+  reconnectAttempt++;
+  reconnecting = true;
+  setConnectionState('reconnecting', `Verbinde neu … (${reconnectAttempt})`);
+
+  reconnectTimer = setTimeout(async () => {
+    reconnectTimer = null;
+    if (!bleDevice || userDisconnected) return;
+    try {
+      await openDevice(bleDevice);
+      showToast(`Wieder verbunden mit ${deviceLabel(bleDevice)}`);
+    } catch {
+      scheduleReconnect();  // never gives up; the delay just stops growing
+    }
+  }, delay);
+}
+
+function cancelReconnect() {
+  clearTimeout(reconnectTimer);
+  reconnectTimer = null;
+  reconnecting   = false;
+}
+
+function onVisibilityChange() {
+  if (document.visibilityState !== 'visible') return;
+  if (userDisconnected || !bleDevice || bleDevice.gatt?.connected) return;
+
+  // Restart the backoff so returning to the app retries almost immediately.
+  reconnectAttempt = 0;
+  cancelReconnect();
+  scheduleReconnect();
+}
+
+/**
+ * Reconnect to the previous session's device without showing the picker.
+ * Needs navigator.bluetooth.getDevices(), which lists devices the user has
+ * already granted this origin — available in Chrome behind
+ * chrome://flags/#enable-web-bluetooth-new-permissions-backend and not in every
+ * Web Bluetooth implementation.  Where it is missing the user taps "Verbinden"
+ * once per session; drops during a session still recover on their own.
+ */
+async function restoreLastDevice() {
+  const last = loadLastDevice();
+  if (!last || typeof navigator.bluetooth?.getDevices !== 'function') return;
+
+  let permitted;
+  try {
+    permitted = await navigator.bluetooth.getDevices();
+  } catch {
+    return;  // API present but unusable — fall back to the manual picker
+  }
+
+  const device = permitted.find(d => d.id === last.id);
+  if (!device) {
+    // Permission for that device is gone (revoked, or a different profile).
+    clearLastDevice();
+    return;
+  }
+
+  bleDevice = device;
+  setConnectionState('connecting');
+  try {
+    await openDevice(device);
+    showToast(`Automatisch verbunden mit ${deviceLabel(device)}`);
+  } catch {
+    // Device is known but not in range yet — keep trying in the background.
+    scheduleReconnect();
+  }
+}
+
+/** getDevices() may hand back a device without a name — keep labels sane. */
+function deviceLabel(device) {
+  return device?.name || 'BusyLight';
 }
 
 // ── UI state helpers ──────────────────────────────────────────────────────────
-function setConnectionState(state, deviceName = '') {
-  const connected  = state === 'connected';
-  const connecting = state === 'connecting';
+function setConnectionState(state, detail = '') {
+  const connected    = state === 'connected';
+  const connecting   = state === 'connecting';
+  const retrying     = state === 'reconnecting';
 
   document.getElementById('dot').className        = 'dot ' + state;
   const text = document.getElementById('statusText');
   text.className   = connected ? 'connected' : '';
   text.textContent = connecting ? 'Verbinde …'
-                   : connected  ? deviceName
+                   : retrying   ? (detail || 'Verbinde neu …')
+                   : connected  ? detail
                    : 'Nicht verbunden';
 
   const batteryText = document.getElementById('batteryText');
   if (!connected) batteryText.hidden = true;
 
   const btn = document.getElementById('connectBtn');
-  btn.textContent = connected ? 'Trennen' : 'Verbinden';
-  btn.className   = 'btn ' + (connected ? 'btn-danger' : 'btn-primary');
+  // While retrying, the button's job is to call off the automatic attempts.
+  btn.textContent = connected ? 'Trennen' : retrying ? 'Stopp' : 'Verbinden';
+  btn.className   = 'btn ' + (connected || retrying ? 'btn-danger' : 'btn-primary');
   btn.disabled    = connecting;
 
   document.getElementById('sendBtn').disabled = !connected;

@@ -80,7 +80,8 @@
       transition: background 0.3s;
     }
     .dot.connected  { background: var(--success); }
-    .dot.connecting { background: #f59e0b; animation: blink 1s infinite; }
+    .dot.connecting,
+    .dot.reconnecting { background: #f59e0b; animation: blink 1s infinite; }
 
     @keyframes blink {
       0%, 100% { opacity: 1; }

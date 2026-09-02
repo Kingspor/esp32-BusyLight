@@ -114,3 +114,66 @@ export function resetPreset(id) {
   } catch {}
   return { ...PRESETS.find(p => p.id === id) };
 }
+
+// ── Last-device persistence ───────────────────────────────────────────────────
+// Web Bluetooth device IDs are opaque, origin-scoped handles.  Storing one lets
+// us find the same device again in navigator.bluetooth.getDevices() and connect
+// without showing the picker — the browser remembers the granted permission,
+// we only have to remember which of the permitted devices was ours.
+
+const LAST_DEVICE_KEY = 'busylight-last-device';
+
+/**
+ * Remember the device we are connected to, so the next app start can reconnect
+ * to it silently.
+ * @param {{ id: string, name?: string }} device  A BluetoothDevice (or a stub)
+ */
+export function saveLastDevice(device) {
+  if (!device?.id) return;
+  try {
+    localStorage.setItem(LAST_DEVICE_KEY, JSON.stringify({
+      id:   device.id,
+      name: device.name || '',
+    }));
+  } catch {}
+}
+
+/**
+ * Read the last successfully connected device.
+ * @returns {{ id: string, name: string } | null}
+ */
+export function loadLastDevice() {
+  try {
+    const raw = localStorage.getItem(LAST_DEVICE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    return parsed?.id ? { id: parsed.id, name: parsed.name || '' } : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Forget the remembered device (used when the user disconnects deliberately). */
+export function clearLastDevice() {
+  try {
+    localStorage.removeItem(LAST_DEVICE_KEY);
+  } catch {}
+}
+
+// ── Reconnect backoff ─────────────────────────────────────────────────────────
+
+// Delays between reconnect attempts, in ms.  Short at first so a brief radio
+// glitch recovers almost unnoticed, then backing off to a 30 s poll that can
+// run all day without draining the phone.
+export const RECONNECT_DELAYS_MS = [1000, 2000, 4000, 8000, 15000, 30000];
+
+/**
+ * Delay before reconnect attempt number `attempt` (0-based).  Attempts beyond
+ * the table stay at the last (longest) delay, so retrying never gives up.
+ * @param {number} attempt
+ * @returns {number} delay in ms
+ */
+export function reconnectDelayMs(attempt) {
+  const i = Math.min(Math.max(attempt, 0), RECONNECT_DELAYS_MS.length - 1);
+  return RECONNECT_DELAYS_MS[i];
+}

@@ -17,6 +17,15 @@ BleServer     bleServer;
 static unsigned long lastStatusBlink = 0;
 static bool          statusLedOn     = false;
 
+// ── Disconnect hold state ─────────────────────────────────────────────────────
+// After the link drops we keep animating the last received command instead of
+// blanking the ring, so a dropped connection is never mistaken for "available".
+// See LED_HOLD_AFTER_DISCONNECT_MS in config.h for the rationale.
+
+static bool          wasConnected  = false;  // link state on the previous tick
+static bool          holdActive    = false;  // showing the last command post-disconnect
+static unsigned long holdStartedMs = 0;      // millis() at the moment the link dropped
+
 // ============================================================
 // setup
 // ============================================================
@@ -47,15 +56,34 @@ void loop() {
     // Let the BLE server manage connect / disconnect events
     bleServer.update();
 
-    if (bleServer.isConnected()) {
+    const bool connected = bleServer.isConnected();
+
+    if (connected) {
         // Client connected: run LED animations, status LED solid ON
         ledController.update();
         bleServer.updateTelemetry();
         digitalWrite(STATUS_LED_PIN, LOW);  // Active LOW = LED on
     } else {
-        // No client: LED ring off, status LED blinks at 1 Hz
-        ledController.off();
+        // Link just dropped — start the hold window.  A hold is only armed if a
+        // client was actually connected before, so a fresh boot with no client
+        // leaves the ring dark rather than lighting up an all-zero command.
+        if (wasConnected) {
+            holdActive    = true;
+            holdStartedMs = millis();
+            Serial.printf("[LED] Link lost — holding last status for %lu s.\n",
+                          LED_HOLD_AFTER_DISCONNECT_MS / 1000);
+        }
 
+        if (holdActive && millis() - holdStartedMs >= LED_HOLD_AFTER_DISCONNECT_MS) {
+            holdActive = false;
+            Serial.println("[LED] Hold window expired — ring off to save battery.");
+        }
+
+        // Keep showing the last command during the hold window, then go dark.
+        if (holdActive) ledController.update();
+        else            ledController.off();
+
+        // Status LED blinks at 1 Hz for the whole disconnected period
         unsigned long now = millis();
         if (now - lastStatusBlink >= STATUS_LED_BLINK_INTERVAL_MS) {
             lastStatusBlink = now;
@@ -64,4 +92,6 @@ void loop() {
             digitalWrite(STATUS_LED_PIN, statusLedOn ? LOW : HIGH);
         }
     }
+
+    wasConnected = connected;
 }

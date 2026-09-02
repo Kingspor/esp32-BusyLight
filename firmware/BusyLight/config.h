@@ -30,7 +30,14 @@ constexpr uint16_t BLE_ADV_INTERVAL_MAX = 160;
 constexpr uint16_t BLE_CONN_INTERVAL_MIN = 0x10;  //  20 ms (0x10 * 1.25 ms)
 constexpr uint16_t BLE_CONN_INTERVAL_MAX = 0x24;  //  45 ms (0x24 * 1.25 ms)
 constexpr uint16_t BLE_CONN_LATENCY      = 0;     //  no peripheral latency
-constexpr uint16_t BLE_CONN_TIMEOUT      = 400;   //  4 s supervision timeout (units of 10 ms)
+// Supervision timeout: how long the link may go unanswered before either side
+// declares it dead (units of 10 ms).  The former 4 s was tight enough that a
+// brief radio interruption — a phone in a pocket, a locked screen, someone
+// walking between device and host — was enough to tear the link down.
+// 6 s is the maximum Apple's Accessory Design Guidelines allow for a requested
+// connection parameter update, so this is the most tolerance we can ask for
+// while staying compatible with iOS (Bluefy) and Windows alike.
+constexpr uint16_t BLE_CONN_TIMEOUT      = 600;   //  6 s supervision timeout (units of 10 ms)
 
 // BLE service and characteristic UUIDs
 #define SERVICE_UUID          "feda0100-51a7-4fb7-a27b-c720bef16ef7"
@@ -83,6 +90,20 @@ constexpr uint16_t BLE_CONN_TIMEOUT      = 400;   //  4 s supervision timeout (u
 
 // Status LED blink half-period when no client is connected (ms)
 #define STATUS_LED_BLINK_INTERVAL_MS  500
+
+// ============================================================
+// Disconnect behaviour
+// ============================================================
+// When the BLE link drops, the ring keeps showing the last received command
+// for this long instead of going dark immediately.  A dropped link is normally
+// re-established within seconds (both the Windows app and the PWA reconnect on
+// their own), and a silently dark ring is worse than a slightly stale one:
+// colleagues read "no light" as "available".
+// Once the hold expires the ring turns off to protect the battery — that is the
+// case where the host really is gone, e.g. the phone left the building.
+// The internal status LED blinks for the whole disconnected period, so the link
+// state stays visible on the device itself.
+constexpr unsigned long LED_HOLD_AFTER_DISCONNECT_MS = 1800000;  // 30 minutes
 
 // ============================================================
 // Battery voltage monitoring

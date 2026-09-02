@@ -1,10 +1,27 @@
-import { describe, test } from 'node:test';
+import { describe, test, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   hexToRgb, rgbToHex, buildPacket, percentLabel, parseTelemetry,
   PRESETS, MODES, DEFAULT_BRIGHTNESS,
   SERVICE_UUID, LED_CHAR_UUID, TELEMETRY_CHAR_UUID,
+  saveLastDevice, loadLastDevice, clearLastDevice,
+  reconnectDelayMs, RECONNECT_DELAYS_MS,
 } from '../busylight-core.js';
+
+// Node has no localStorage without --experimental-webstorage, so the storage
+// helpers get a minimal in-memory stand-in.  busylight-core.js only touches
+// localStorage inside function bodies, never at import time, so installing the
+// stub after the (hoisted) import is safe.
+function installStorageStub() {
+  const store = new Map();
+  globalThis.localStorage = {
+    getItem:    key => (store.has(key) ? store.get(key) : null),
+    setItem:    (key, value) => { store.set(key, String(value)); },
+    removeItem: key => { store.delete(key); },
+    clear:      () => { store.clear(); },
+  };
+  return store;
+}
 
 // ── hexToRgb ──────────────────────────────────────────────────────────────────
 describe('hexToRgb', () => {
@@ -208,5 +225,118 @@ describe('BLE UUIDs', () => {
 
   test('TELEMETRY_CHAR_UUID differs from LED_CHAR_UUID', () => {
     assert.notEqual(TELEMETRY_CHAR_UUID, LED_CHAR_UUID);
+  });
+});
+
+// ── Last-device persistence ───────────────────────────────────────────────────
+describe('last-device persistence', () => {
+  let store;
+  beforeEach(() => { store = installStorageStub(); });
+
+  test('returns null when nothing was ever saved', () => {
+    assert.equal(loadLastDevice(), null);
+  });
+
+  test('round-trips id and name', () => {
+    saveLastDevice({ id: 'abc123', name: 'BusyLight-4F2A' });
+    assert.deepEqual(loadLastDevice(), { id: 'abc123', name: 'BusyLight-4F2A' });
+  });
+
+  test('a nameless device still round-trips its id', () => {
+    saveLastDevice({ id: 'abc123' });
+    assert.deepEqual(loadLastDevice(), { id: 'abc123', name: '' });
+  });
+
+  test('ignores a device without an id', () => {
+    saveLastDevice({ name: 'BusyLight-4F2A' });
+    assert.equal(loadLastDevice(), null);
+  });
+
+  test('ignores null / undefined', () => {
+    saveLastDevice(null);
+    saveLastDevice(undefined);
+    assert.equal(loadLastDevice(), null);
+  });
+
+  test('saving twice keeps only the newer device', () => {
+    saveLastDevice({ id: 'first',  name: 'BusyLight-0001' });
+    saveLastDevice({ id: 'second', name: 'BusyLight-0002' });
+    assert.equal(loadLastDevice().id, 'second');
+  });
+
+  test('clearLastDevice forgets the device', () => {
+    saveLastDevice({ id: 'abc123', name: 'BusyLight-4F2A' });
+    clearLastDevice();
+    assert.equal(loadLastDevice(), null);
+  });
+
+  test('corrupt JSON in storage does not throw', () => {
+    store.set('busylight-last-device', '{not json');
+    assert.equal(loadLastDevice(), null);
+  });
+
+  test('a stored entry without an id is treated as absent', () => {
+    store.set('busylight-last-device', JSON.stringify({ name: 'BusyLight' }));
+    assert.equal(loadLastDevice(), null);
+  });
+
+  test('presets and last device use separate storage keys', () => {
+    saveLastDevice({ id: 'abc123', name: 'BusyLight-4F2A' });
+    assert.ok(store.has('busylight-last-device'));
+    assert.ok(!store.has('busylight-presets'));
+  });
+
+  test('survives storage that throws (private mode / disabled)', () => {
+    globalThis.localStorage = {
+      getItem:    () => { throw new Error('denied'); },
+      setItem:    () => { throw new Error('denied'); },
+      removeItem: () => { throw new Error('denied'); },
+    };
+    assert.doesNotThrow(() => saveLastDevice({ id: 'x', name: 'y' }));
+    assert.doesNotThrow(() => clearLastDevice());
+    assert.equal(loadLastDevice(), null);
+  });
+});
+
+// ── Reconnect backoff ─────────────────────────────────────────────────────────
+describe('reconnectDelayMs', () => {
+  test('first attempt retries after 1 s', () => {
+    assert.equal(reconnectDelayMs(0), 1000);
+  });
+
+  test('delays grow monotonically', () => {
+    for (let i = 1; i < RECONNECT_DELAYS_MS.length; i++) {
+      assert.ok(
+        RECONNECT_DELAYS_MS[i] > RECONNECT_DELAYS_MS[i - 1],
+        `delay ${i} (${RECONNECT_DELAYS_MS[i]}) must exceed the previous one`,
+      );
+    }
+  });
+
+  test('follows the table for every listed attempt', () => {
+    RECONNECT_DELAYS_MS.forEach((expected, i) => {
+      assert.equal(reconnectDelayMs(i), expected, `attempt ${i}`);
+    });
+  });
+
+  test('caps at the longest delay instead of giving up', () => {
+    const cap = RECONNECT_DELAYS_MS[RECONNECT_DELAYS_MS.length - 1];
+    assert.equal(reconnectDelayMs(RECONNECT_DELAYS_MS.length),      cap);
+    assert.equal(reconnectDelayMs(RECONNECT_DELAYS_MS.length + 50), cap);
+    assert.equal(reconnectDelayMs(9999),                            cap);
+  });
+
+  test('cap stays at 30 s so all-day retrying is cheap', () => {
+    assert.equal(reconnectDelayMs(9999), 30000);
+  });
+
+  test('a negative attempt falls back to the first delay', () => {
+    assert.equal(reconnectDelayMs(-1), 1000);
+  });
+
+  test('every delay is a positive finite number', () => {
+    for (const d of RECONNECT_DELAYS_MS) {
+      assert.ok(Number.isFinite(d) && d > 0, `${d} is not a usable delay`);
+    }
   });
 });

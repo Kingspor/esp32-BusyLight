@@ -32,6 +32,11 @@ public:
     // Turn all LEDs off immediately.
     void off();
 
+    // The command currently being animated, exactly as it arrived over BLE.
+    // Exposed so the GATT server can publish the device's real state — clients
+    // reconnecting after a drop have no other way to learn what the ring shows.
+    const LedCommand& command() const { return _cmd; }
+
 private:
     Adafruit_NeoPixel _pixels;
     LedCommand        _cmd{0, 0, 0, 0, MODE_STATIC, 0};

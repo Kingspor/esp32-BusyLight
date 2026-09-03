@@ -3,6 +3,7 @@
 export const SERVICE_UUID       = 'feda0100-51a7-4fb7-a27b-c720bef16ef7';
 export const LED_CHAR_UUID      = 'feda0101-51a7-4fb7-a27b-c720bef16ef7';
 export const TELEMETRY_CHAR_UUID = 'feda0102-51a7-4fb7-a27b-c720bef16ef7';
+export const STATE_CHAR_UUID    = 'feda0104-51a7-4fb7-a27b-c720bef16ef7';
 
 // Brightness cap default: 153 / 255 ≈ 60 %, mirrors PollingSettings.BrightnessCap = 0.6
 export const DEFAULT_BRIGHTNESS = 153;
@@ -76,6 +77,47 @@ export function parseTelemetry(dataView) {
   const mv  = dataView.getUint8(0) | (dataView.getUint8(1) << 8);
   const soc = dataView.getUint8(2);
   return { mv, soc };
+}
+
+/**
+ * Parse the 6-byte state DataView — the command the ring is currently showing.
+ * Same byte layout as the LED command packet, so the device reports its state
+ * in exactly the format it accepts.
+ * @param {DataView} dataView
+ * @returns {{ r: number, g: number, b: number, brightness: number, mode: number, speed: number }}
+ */
+export function parseState(dataView) {
+  return {
+    r:          dataView.getUint8(0),
+    g:          dataView.getUint8(1),
+    b:          dataView.getUint8(2),
+    brightness: dataView.getUint8(3),
+    mode:       dataView.getUint8(4),
+    speed:      dataView.getUint8(5),
+  };
+}
+
+/**
+ * Find which preset a device state corresponds to, so the UI can highlight it.
+ * Matches on all six bytes: two presets can share a colour and differ only in
+ * mode (Besetzt vs. Nicht stören), so a colour-only match would pick the wrong
+ * one. Returns null for a state set through the manual controls, which is not
+ * a preset and should leave every button unhighlighted.
+ * @param {object} state    Result of parseState()
+ * @param {object[]} presets Presets to match against — pass the user's edited set
+ * @returns {string|null} The matching preset id, or null
+ */
+export function matchPreset(state, presets) {
+  if (!state || !Array.isArray(presets)) return null;
+  const found = presets.find(p =>
+    p.r          === state.r          &&
+    p.g          === state.g          &&
+    p.b          === state.b          &&
+    p.brightness === state.brightness &&
+    p.mode       === state.mode       &&
+    p.speed      === state.speed
+  );
+  return found ? found.id : null;
 }
 
 // ── Preset persistence ────────────────────────────────────────────────────────

@@ -44,6 +44,7 @@ constexpr uint16_t BLE_CONN_TIMEOUT      = 600;   //  6 s supervision timeout (u
 #define LED_CHAR_UUID         "feda0101-51a7-4fb7-a27b-c720bef16ef7"  // WRITE | WRITE_NO_RESPONSE
 #define TELEMETRY_CHAR_UUID   "feda0102-51a7-4fb7-a27b-c720bef16ef7"  // READ | NOTIFY (stub)
 #define PROTOCOL_VER_CHAR_UUID "feda0103-51a7-4fb7-a27b-c720bef16ef7" // READ — protocol version byte
+#define STATE_CHAR_UUID       "feda0104-51a7-4fb7-a27b-c720bef16ef7"  // READ | NOTIFY — current LED command
 
 // ============================================================
 // Protocol versioning
@@ -55,6 +56,9 @@ constexpr uint16_t BLE_CONN_TIMEOUT      = 600;   //  6 s supervision timeout (u
 //   - New mandatory characteristics are added
 //
 // Adding new animation modes is BACKWARDS-COMPATIBLE — do NOT increment.
+// Adding an OPTIONAL characteristic is backwards-compatible too: clients that do
+// not know it simply never read it.  Only a characteristic clients are REQUIRED
+// to use counts as breaking.
 //
 // Version history:
 //   1  (v0.1.0)  Initial release: 6-byte command packet (R,G,B,Brightness,Mode,Speed)

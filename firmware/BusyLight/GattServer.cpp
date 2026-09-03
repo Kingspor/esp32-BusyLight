@@ -61,6 +61,7 @@ public:
 
         if (len == CMD_PACKET_SIZE) {
             _owner._ledController->setCommand(data, CMD_PACKET_SIZE);
+            _owner._statePublishPending = true;
 
             Serial.printf("[BLE] LED command: R=%u G=%u B=%u Bri=%u Mode=%u Spd=%u\n",
                           data[0], data[1], data[2], data[3], data[4], data[5]);
@@ -152,6 +153,18 @@ void BleServer::begin(LedController& ledController) {
     _pProtocolVerChar->setValue(&protocolVersion, 1);
     Serial.printf("[BLE] Protocol version: %u\n", protocolVersion);
 
+    // State characteristic: readable and notifiable, carrying the command the
+    // ring is currently animating in the same 6-byte layout as LED_CHAR_UUID.
+    // A client that (re)connects has no other way to find out what is on screen;
+    // without this it can only guess from what it itself last sent, which is
+    // wrong as soon as another client — or a device reboot — changed it.
+    _pStateChar = pService->createCharacteristic(
+        STATE_CHAR_UUID,
+        BLECharacteristic::PROPERTY_READ | BLECharacteristic::PROPERTY_NOTIFY
+    );
+    _pStateChar->addDescriptor(new BLE2902());
+    publishState();  // seed it so a READ before the first write returns the truth
+
     // Start the service
     pService->start();
 
@@ -188,6 +201,12 @@ void BleServer::update() {
 
     _oldConnected = _deviceConnected;
 
+    // A new LED command arrived — tell every subscriber what the ring now shows.
+    if (_statePublishPending) {
+        _statePublishPending = false;
+        publishState();
+    }
+
     // Request a short connection interval so the Windows GATT stack can
     // complete service discovery without timing out.  Windows defaults to
     // 698–2500 ms which triggers ERROR_BAD_COMMAND (0x80070016) on the app side.
@@ -215,6 +234,23 @@ void BleServer::update() {
 
 bool BleServer::isConnected() const {
     return _deviceConnected;
+}
+
+// ============================================================
+// Current-state publication
+// ============================================================
+
+void BleServer::publishState() {
+    if (_pStateChar == nullptr || _ledController == nullptr) return;
+
+    const LedCommand& c = _ledController->command();
+    std::array<uint8_t, CMD_PACKET_SIZE> buf = {
+        c.r, c.g, c.b, c.brightness, c.mode, c.speed
+    };
+    _pStateChar->setValue(buf.data(), buf.size());
+
+    // A READ always works; NOTIFY only means anything with a client attached.
+    if (_deviceConnected) _pStateChar->notify();
 }
 
 // ============================================================

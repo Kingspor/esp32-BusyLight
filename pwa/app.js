@@ -1,7 +1,8 @@
 import {
-  SERVICE_UUID, LED_CHAR_UUID, TELEMETRY_CHAR_UUID,
+  SERVICE_UUID, LED_CHAR_UUID, TELEMETRY_CHAR_UUID, STATE_CHAR_UUID,
   PRESETS, MODES,
   hexToRgb, rgbToHex, buildPacket, percentLabel, parseTelemetry,
+  parseState, matchPreset,
   DEFAULT_BRIGHTNESS,
   loadPresets, savePreset, resetPreset,
   saveLastDevice, loadLastDevice, clearLastDevice, reconnectDelayMs,
@@ -11,6 +12,7 @@ import {
 let bleDevice      = null;
 let ledChar        = null;
 let telemetryChar  = null;
+let stateChar      = null;
 let selectedMode   = 0;
 let toastTimer     = null;
 let activePresets  = loadPresets();
@@ -185,6 +187,7 @@ async function openDevice(device) {
   ledChar       = await service.getCharacteristic(LED_CHAR_UUID);
 
   await subscribeTelemetry(service);
+  await subscribeState(service);
 
   userDisconnected = false;
   reconnectAttempt = 0;
@@ -207,9 +210,36 @@ async function subscribeTelemetry(service) {
   }
 }
 
+/**
+ * Ask the device what it is currently showing and keep following it.
+ * Without this the UI can only reflect what this phone last sent, which goes
+ * stale the moment the link drops, the device reboots, or the Windows app
+ * changes the status.  Firmware without the characteristic simply leaves the
+ * highlight cleared rather than showing something invented.
+ */
+async function subscribeState(service) {
+  try {
+    stateChar = await service.getCharacteristic(STATE_CHAR_UUID);
+    applyDeviceState(parseState(await stateChar.readValue()));
+    await stateChar.startNotifications();
+    stateChar.addEventListener('characteristicvaluechanged', e =>
+      applyDeviceState(parseState(e.target.value))
+    );
+  } catch {
+    stateChar = null;
+    clearActivePreset();
+  }
+}
+
+/** Highlight whichever preset the device's current command corresponds to. */
+function applyDeviceState(state) {
+  highlightPreset(matchPreset(state, activePresets));
+}
+
 function handleConnectFailure(err) {
   ledChar       = null;
   telemetryChar = null;
+  stateChar     = null;
   bleDevice     = null;
   setConnectionState('disconnected');
   // NotFoundError / NotAllowedError = user cancelled picker — no toast needed
@@ -221,6 +251,7 @@ function handleConnectFailure(err) {
 function onDisconnected() {
   ledChar       = null;
   telemetryChar = null;
+  stateChar     = null;
   clearActivePreset();
 
   if (userDisconnected) {
@@ -354,6 +385,13 @@ function clearActivePreset() {
   document.querySelectorAll('.preset-btn').forEach(b => b.classList.remove('active'));
 }
 
+/** Mark exactly one preset as active, or none when id is null. */
+function highlightPreset(id) {
+  clearActivePreset();
+  if (!id) return;
+  document.getElementById(`preset-${id}`)?.classList.add('active');
+}
+
 function selectMode(id) {
   selectedMode = id;
   document.querySelectorAll('.mode-btn')
@@ -382,8 +420,9 @@ async function sendPreset(preset) {
     preset.brightness, preset.mode, preset.speed,
   );
   if (!ok) return;
-  clearActivePreset();
-  document.getElementById(`preset-${preset.id}`).classList.add('active');
+  // With the state characteristic present its notification highlights this
+  // anyway; doing it here too keeps older firmware responsive.
+  highlightPreset(preset.id);
   showToast(preset.label);
 }
 
@@ -393,7 +432,7 @@ async function sendManual() {
   const speed        = parseInt(document.getElementById('speed').value, 10);
   const ok           = await sendCommand(r, g, b, brightness, selectedMode, speed);
   if (ok) {
-    clearActivePreset();
+    highlightPreset(null);  // a manual colour is no preset
     showToast('Gesendet');
   }
 }

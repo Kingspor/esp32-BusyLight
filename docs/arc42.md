@@ -243,6 +243,20 @@ Normal release flow: bump `<Version>` in `BusyLight.csproj` → merge PR → rel
 | 4 | Mode | 0=Static, 1=Pulse, 2=Chase, 3=Rainbow, 4=Blink, 5=Fill |
 | 5 | Speed | 0–255 (higher = faster) |
 
+### Device State Readback
+
+The ring's current command is mirrored on `feda0104-…` (READ | NOTIFY) in the same
+6-byte layout. A client reads it on connect and subscribes for changes.
+
+This exists because a client cannot otherwise know what the ring is showing. Its own
+send history is not an answer: it goes stale as soon as the link drops, the device
+reboots, or another client changes the status. That gap became visible once the
+firmware started holding the last status through a disconnect — the ring kept
+glowing while the PWA showed nothing selected.
+
+The characteristic is **optional**: clients that do not know it are unaffected, so
+adding it did not bump the protocol version.
+
 ### Protocol Versioning
 
 A single read-only byte characteristic (`feda0103-…`) exposes the firmware's protocol version. The app reads it on every connect, displays it in the status bar of the settings window (`Protokoll: v1`), and emits a balloon warning on mismatch. The connection is kept open; LED commands may not work correctly until both sides are updated.

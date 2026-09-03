@@ -39,6 +39,25 @@ constexpr uint16_t BLE_CONN_LATENCY      = 0;     //  no peripheral latency
 // while staying compatible with iOS (Bluefy) and Windows alike.
 constexpr uint16_t BLE_CONN_TIMEOUT      = 600;   //  6 s supervision timeout (units of 10 ms)
 
+// ============================================================
+// Simultaneous clients
+// ============================================================
+// A workstation (Windows app) and a phone (PWA) may hold the link at the same
+// time.  The NimBLE stack is built for 3 (CONFIG_BT_NIMBLE_MAX_CONNECTIONS);
+// we stop at 2 and leave the third slot as headroom rather than filling the
+// stack to its limit.
+//
+// Conflicts resolve as last-write-wins, which is coherent because every client
+// follows STATE_CHAR_UUID: a command from one is reflected to the other within
+// a tick, so both always show the same status.
+constexpr uint8_t BLE_MAX_CLIENTS = 2;
+
+// Pause before (re)starting advertising after a connection change, letting the
+// BLE stack settle.  Applied WITHOUT blocking loop() — advertising now restarts
+// after every connect as well, and a blocking delay() would stutter the LED
+// animation on each client change.
+constexpr unsigned long BLE_ADV_RESTART_DELAY_MS = 500;
+
 // BLE service and characteristic UUIDs
 #define SERVICE_UUID          "feda0100-51a7-4fb7-a27b-c720bef16ef7"
 #define LED_CHAR_UUID         "feda0101-51a7-4fb7-a27b-c720bef16ef7"  // WRITE | WRITE_NO_RESPONSE

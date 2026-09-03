@@ -243,6 +243,31 @@ Normal release flow: bump `<Version>` in `BusyLight.csproj` → merge PR → rel
 | 4 | Mode | 0=Static, 1=Pulse, 2=Chase, 3=Rainbow, 4=Blink, 5=Fill |
 | 5 | Speed | 0–255 (higher = faster) |
 
+### Simultaneous Clients
+
+The ring accepts `BLE_MAX_CLIENTS` (2) connections at once — typically the Windows tray
+app and the phone PWA. Three things make that work, and each was a genuine blocker
+before:
+
+1. **Advertising restarts after every connect.** BLE stops advertising as soon as a
+   connection is established. The firmware previously restarted it only on *disconnect*,
+   so while one client was attached, a second could not even discover the device.
+   `update()` now resumes advertising whenever a slot is free and stops offering one
+   when full.
+2. **The connection count is the library's**, read via `getConnectedCount()` rather than
+   a local `bool`. A flag was wrong for two clients: one leaving set it to `false` while
+   the other was still attached, which blanked the ring into hold mode and stopped
+   telemetry for the remaining client. Note the library increments its count *after* the
+   connect callback returns, so it must never be read from inside one.
+3. **Connection-parameter updates are queued per client.** A single pending slot would
+   drop one update when two clients connect in the same tick, leaving that client on the
+   central's default interval — the exact Windows service-discovery failure the
+   mechanism exists to prevent.
+
+Conflicts resolve last-write-wins. That is coherent rather than chaotic because both
+clients subscribe to the state characteristic below: a command from one is reflected to
+the other within a tick, so they never disagree about what the ring shows.
+
 ### Device State Readback
 
 The ring's current command is mirrored on `feda0104-…` (READ | NOTIFY) in the same

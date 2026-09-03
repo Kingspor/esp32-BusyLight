@@ -77,6 +77,12 @@ Merge a PR to `main` with a bumped `<Version>` in `BusyLight.csproj` → `auto-r
   received command for `LED_HOLD_AFTER_DISCONNECT_MS` (30 min) instead of blanking, so a
   dropped connection is never misread as "available". The internal status LED blinks
   throughout; after the hold expires the ring goes dark to protect the battery.
+- **Two clients at once** (`GattServer.cpp`): the Windows app and the PWA can hold the
+  link simultaneously (`BLE_MAX_CLIENTS = 2`). BLE stops advertising on every established
+  connection, so `update()` restarts it whenever a slot is free — without that, a second
+  client could never discover the device. The connection count comes from the BLE
+  library (`getConnectedCount()`), never from a local flag, and the LED hold arms only
+  when the **last** client leaves.
 - **`config.h`**: Single source of truth for BLE UUIDs, pin definitions, protocol version.
 
 ### PWA
@@ -110,7 +116,10 @@ sent. Optional — adding it did not bump the protocol version.
 
 - **ADR-001/002**: Currently WinForms — **WPF migration planned** (see `docs/wpf-migration.md`). Models & services are UI-agnostic; only the UI layer changes.
 - **ADR-004**: Brightness capped on app side (default 0.6) to protect USB power budget.
-- Single BLE device per workstation — no multi-device support by design.
+- One BusyLight per workstation — the app never manages several rings. This is about
+  devices, not clients: since `BLE_MAX_CLIENTS = 2` a single ring accepts the Windows app
+  and a phone at the same time, and last-write-wins is coherent because both follow the
+  state characteristic.
 - `ClientId` and `TenantId` in `appsettings.json` are app registration values, not secrets.
 
 ## Animation Modes

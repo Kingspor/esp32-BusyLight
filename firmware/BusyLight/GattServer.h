@@ -40,19 +40,42 @@ private:
     BLECharacteristic* _pProtocolVerChar = nullptr;
     BLECharacteristic* _pStateChar        = nullptr;
 
-    // Tracks the connection state across two consecutive loop() calls
-    // so advertising can be restarted after a disconnect.
-    volatile bool _deviceConnected = false;
-    bool          _oldConnected    = false;
+    // How many clients were connected on the previous loop() call.  The count
+    // itself is owned by the BLE library (getConnectedCount()); we only keep the
+    // previous value so update() can spot a change.
+    //
+    // Never read the library's count from inside a connect callback — it is
+    // incremented *after* the callback returns, so it would be one short.
+    uint32_t _oldCount = 0;
 
-    // State for the deferred connection-parameter update (sent one tick after
-    // onConnect so the BLE stack has fully settled).
-    // Bluedroid builds need the remote BD address; NimBLE builds need the
-    // 16-bit connection handle.  Both fields are kept (8 bytes total) to
-    // avoid including sdkconfig.h / BLE headers in this header file.
-    std::array<uint8_t, 6> _remoteBda{};  // Bluedroid: remote BD address from onConnect
-    uint16_t _connHandle              = 0; // NimBLE:    connection handle from onConnect
-    bool     _connParamUpdatePending  = false;
+    // Deferred, non-blocking advertising restart (see BLE_ADV_RESTART_DELAY_MS).
+    // _advertising mirrors what we believe the radio is doing: BLE stops
+    // advertising on every established connection, so it is cleared whenever a
+    // client arrives and set again when we restart.  Without it, a client
+    // leaving while we already advertise would trigger a redundant start.
+    bool          _advertisePending = false;
+    unsigned long _advertiseSetAtMs = 0;
+    bool          _advertising      = false;
+
+    // Pending connection-parameter updates, one slot per client (sent one tick
+    // after onConnect so the BLE stack has settled).
+    //
+    // A single slot would silently lose an update when two clients connect
+    // within the same tick, and the client that lost it would stay on the
+    // central's default interval — precisely the Windows service-discovery
+    // failure (ERROR_BAD_COMMAND) this mechanism exists to prevent.
+    //
+    // Bluedroid needs the remote BD address, NimBLE the 16-bit handle; both are
+    // kept so this header stays free of sdkconfig.h and the BLE headers.
+    struct PendingConnParam {
+        bool                   active = false;
+        std::array<uint8_t, 6> bda{};      // Bluedroid: remote BD address
+        uint16_t               handle = 0;  // NimBLE:    connection handle
+    };
+    std::array<PendingConnParam, BLE_MAX_CLIENTS> _pendingConnParams{};
+
+    // First unused connection-parameter slot, or nullptr when all are taken.
+    PendingConnParam* freeConnParamSlot();
 
     // Reference to the LED controller, set in begin().
     LedController* _ledController = nullptr;

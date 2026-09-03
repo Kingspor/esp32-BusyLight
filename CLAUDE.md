@@ -33,9 +33,12 @@ Requires Windows 10 build 22621 (22H2) or later. No test projects exist — the 
 ### Firmware (ESP32-C3)
 **Arduino IDE:** Board = ESP32C3 Dev Module, enable USB CDC On Boot, library = Adafruit NeoPixel.
 
+`CDCOnBoot=cdc` is not optional: the board default routes `Serial` to the UART pins,
+so a build without it prints nothing over the USB port you flash through.
+
 **Arduino CLI** (used in CI/CD):
 ```bash
-arduino-cli compile --fqbn esp32:esp32:esp32c3 --output-dir firmware/build firmware/BusyLight
+arduino-cli compile --fqbn esp32:esp32:esp32c3:CDCOnBoot=cdc --output-dir firmware/build firmware/BusyLight
 ```
 
 ### PWA (Web Bluetooth)

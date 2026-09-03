@@ -78,8 +78,13 @@ jobs:
       - name: Compile firmware
         run: |
           mkdir -p firmware/build
+          # CDCOnBoot=cdc routes Serial over the native USB port.  The board
+          # default is Disabled, which sends it to the UART pins instead — the
+          # released .bin then prints nothing on the port you flash it through.
+          # CLAUDE.md has always required this option for local builds; the
+          # release build simply never matched.
           arduino-cli compile \
-            --fqbn esp32:esp32:esp32c3 \
+            --fqbn esp32:esp32:esp32c3:CDCOnBoot=cdc \
             --output-dir firmware/build \
             firmware/BusyLight
 

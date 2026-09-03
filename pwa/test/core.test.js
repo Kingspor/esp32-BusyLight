@@ -6,6 +6,7 @@ import {
   SERVICE_UUID, LED_CHAR_UUID, TELEMETRY_CHAR_UUID,
   saveLastDevice, loadLastDevice, clearLastDevice,
   reconnectDelayMs, RECONNECT_DELAYS_MS,
+  parseState, matchPreset, STATE_CHAR_UUID,
 } from '../busylight-core.js';
 
 // Node has no localStorage without --experimental-webstorage, so the storage
@@ -338,5 +339,112 @@ describe('reconnectDelayMs', () => {
     for (const d of RECONNECT_DELAYS_MS) {
       assert.ok(Number.isFinite(d) && d > 0, `${d} is not a usable delay`);
     }
+  });
+});
+
+// ── parseState ────────────────────────────────────────────────────────────────
+describe('parseState', () => {
+  const dv = bytes => new DataView(new Uint8Array(bytes).buffer);
+
+  test('reads all six bytes in packet order', () => {
+    assert.deepEqual(parseState(dv([1, 2, 3, 4, 5, 6])), {
+      r: 1, g: 2, b: 3, brightness: 4, mode: 5, speed: 6,
+    });
+  });
+
+  test('round-trips a packet built by buildPacket', () => {
+    const p   = PRESETS.find(x => x.id === 'busy');
+    const pkt = buildPacket(p.r, p.g, p.b, p.brightness, p.mode, p.speed);
+    const st  = parseState(new DataView(pkt.buffer));
+    assert.equal(st.r, p.r);
+    assert.equal(st.g, p.g);
+    assert.equal(st.b, p.b);
+    assert.equal(st.brightness, p.brightness);
+    assert.equal(st.mode, p.mode);
+    assert.equal(st.speed, p.speed);
+  });
+
+  test('an all-zero state parses to zeros, not to undefined', () => {
+    assert.deepEqual(parseState(dv([0, 0, 0, 0, 0, 0])), {
+      r: 0, g: 0, b: 0, brightness: 0, mode: 0, speed: 0,
+    });
+  });
+
+  test('accepts full-byte values', () => {
+    const st = parseState(dv([255, 255, 255, 255, 255, 255]));
+    assert.equal(st.r, 255);
+    assert.equal(st.speed, 255);
+  });
+});
+
+// ── matchPreset ───────────────────────────────────────────────────────────────
+describe('matchPreset', () => {
+  const stateOf = p => ({
+    r: p.r, g: p.g, b: p.b, brightness: p.brightness, mode: p.mode, speed: p.speed,
+  });
+
+  test('finds every built-in preset from its own state', () => {
+    for (const p of PRESETS) {
+      assert.equal(matchPreset(stateOf(p), PRESETS), p.id, `preset ${p.id}`);
+    }
+  });
+
+  test('distinguishes presets that share a colour but differ in mode', () => {
+    // busy and dnd are both (200,0,0) — only mode and speed separate them
+    const busy = PRESETS.find(p => p.id === 'busy');
+    const dnd  = PRESETS.find(p => p.id === 'dnd');
+    assert.equal(busy.r, dnd.r);
+    assert.equal(busy.g, dnd.g);
+    assert.equal(busy.b, dnd.b);
+    assert.equal(matchPreset(stateOf(busy), PRESETS), 'busy');
+    assert.equal(matchPreset(stateOf(dnd),  PRESETS), 'dnd');
+  });
+
+  test('returns null for a manual colour that is no preset', () => {
+    const manual = { r: 12, g: 34, b: 56, brightness: 100, mode: 0, speed: 50 };
+    assert.equal(matchPreset(manual, PRESETS), null);
+  });
+
+  test('a single differing byte prevents a match', () => {
+    const p = PRESETS.find(x => x.id === 'available');
+    for (const field of ['r', 'g', 'b', 'brightness', 'mode', 'speed']) {
+      const off = { ...stateOf(p), [field]: stateOf(p)[field] === 7 ? 8 : 7 };
+      assert.equal(matchPreset(off, PRESETS), null, `differing ${field} still matched`);
+    }
+  });
+
+  test('matches against edited presets, not the built-in defaults', () => {
+    const edited = PRESETS.map(p =>
+      p.id === 'busy' ? { ...p, r: 111, g: 22, b: 33 } : { ...p }
+    );
+    const editedBusy = edited.find(p => p.id === 'busy');
+    assert.equal(matchPreset(stateOf(editedBusy), edited), 'busy');
+    // The old default must no longer match the edited set
+    assert.equal(matchPreset(stateOf(PRESETS.find(p => p.id === 'busy')), edited), null);
+  });
+
+  test('an all-zero state matches the off preset', () => {
+    const zero = { r: 0, g: 0, b: 0, brightness: 0, mode: 0, speed: 0 };
+    assert.equal(matchPreset(zero, PRESETS), 'off');
+  });
+
+  test('survives null / malformed input', () => {
+    assert.equal(matchPreset(null, PRESETS), null);
+    assert.equal(matchPreset(undefined, PRESETS), null);
+    assert.equal(matchPreset({ r: 0 }, null), null);
+    assert.equal(matchPreset({ r: 0 }, undefined), null);
+  });
+});
+
+// ── STATE_CHAR_UUID ───────────────────────────────────────────────────────────
+describe('STATE_CHAR_UUID', () => {
+  test('is a valid UUID on the shared base', () => {
+    assert.match(STATE_CHAR_UUID, /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
+    assert.ok(STATE_CHAR_UUID.startsWith('feda01'));
+  });
+
+  test('does not collide with the other characteristics', () => {
+    const all = [SERVICE_UUID, LED_CHAR_UUID, TELEMETRY_CHAR_UUID, STATE_CHAR_UUID];
+    assert.equal(new Set(all).size, all.length);
   });
 });

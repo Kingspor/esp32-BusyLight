@@ -82,6 +82,10 @@ Merge a PR to `main` with a bumped `<Version>` in `BusyLight.csproj` → `auto-r
   parsing, `localStorage` persistence, reconnect backoff. No DOM, no BLE, so it is
   importable in Node for tests.
 - **`app.js`**: DOM wiring and Web Bluetooth. Owns the connection state machine.
+- **Status display**: the active preset highlight comes from the device's state
+  characteristic (read on connect, then followed via NOTIFY), not from what the app last
+  sent — so it stays right across reconnects, reboots and changes made by the Windows app.
+  Against firmware without the characteristic the highlight simply stays cleared.
 - **Auto-reconnect**: the last device's opaque Web Bluetooth ID is stored in
   `localStorage`. On start-up `navigator.bluetooth.getDevices()` finds it again among
   the origin's permitted devices and connects without the picker. Unexpected drops
@@ -95,6 +99,9 @@ Merge a PR to `main` with a bumped `<Version>` in `BusyLight.csproj` → `auto-r
 
 6-byte BLE packet `[R, G, B, Brightness, Mode, Speed]` written to characteristic `feda0101-…`.
 Protocol version (currently `1`) on read-only characteristic `feda0103-…` — bumped only on breaking changes.
+Current device state mirrored on `feda0104-…` (READ | NOTIFY, same 6-byte layout) so a
+client can learn what the ring is actually showing instead of guessing from what it last
+sent. Optional — adding it did not bump the protocol version.
 
 ## Key Design Decisions
 

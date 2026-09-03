@@ -38,6 +38,7 @@ private:
     BLECharacteristic* _pLedChar         = nullptr;
     BLECharacteristic* _pTelemetryChar   = nullptr;
     BLECharacteristic* _pProtocolVerChar = nullptr;
+    BLECharacteristic* _pStateChar        = nullptr;
 
     // Tracks the connection state across two consecutive loop() calls
     // so advertising can be restarted after a disconnect.
@@ -67,6 +68,15 @@ private:
 
     // Battery telemetry state
     unsigned long _lastTelemetryNotifyMs = 0;
+
+    // Set from the write callback, acted on in update().  Notifying from inside
+    // a GATT callback would re-enter the BLE stack; the connection-parameter
+    // update above defers for the same reason.
+    volatile bool _statePublishPending = false;
+
+    // Copy the LED controller's current command into the state characteristic
+    // and notify subscribers.
+    void publishState();
 
     // Read the battery voltage from the ADC and apply the voltage-divider
     // correction.  Returns the result in millivolts.

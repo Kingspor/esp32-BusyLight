@@ -28,21 +28,23 @@ public:
     // and NimBLE (conn_handle / ble_gap_conn_desc), selected at compile time.
 #if defined(CONFIG_BLUEDROID_ENABLED)
     void onConnect(BLEServer* /*pServer*/, esp_ble_gatts_cb_param_t* param) override {
-        _owner._deviceConnected = true;
-        memcpy(_owner._remoteBda.data(), param->connect.remote_bda, _owner._remoteBda.size());
-        _owner._connParamUpdatePending = true;
+        if (auto* slot = _owner.freeConnParamSlot()) {
+            memcpy(slot->bda.data(), param->connect.remote_bda, slot->bda.size());
+            slot->active = true;
+        }
     }
 #elif defined(CONFIG_NIMBLE_ENABLED)
     void onConnect(BLEServer* /*pServer*/, ble_gap_conn_desc* desc) override {
-        _owner._deviceConnected = true;
-        _owner._connHandle = desc->conn_handle;
-        _owner._connParamUpdatePending = true;
+        if (auto* slot = _owner.freeConnParamSlot()) {
+            slot->handle = desc->conn_handle;
+            slot->active = true;
+        }
     }
 #endif
 
-    void onDisconnect(BLEServer* /*pServer*/) override {
-        _owner._deviceConnected = false;
-    }
+    // No onDisconnect override: update() notices the change through the BLE
+    // library's connection count, which is the single source of truth now that
+    // more than one client can be attached.
 
 private:
     BleServer& _owner;
@@ -178,8 +180,10 @@ void BleServer::begin(LedController& ledController) {
     pAdvertising->setMaxInterval(BLE_ADV_INTERVAL_MAX);
 
     pAdvertising->start();
+    _advertising = true;
 
-    Serial.println("[BLE] Advertising started. Waiting for client...");
+    Serial.printf("[BLE] Advertising started. Up to %u clients.\n",
+                  (unsigned)BLE_MAX_CLIENTS);
 }
 
 // ============================================================
@@ -187,38 +191,51 @@ void BleServer::begin(LedController& ledController) {
 // ============================================================
 
 void BleServer::update() {
-    // A client just disconnected — restart advertising so a new client can connect
-    if (_oldConnected && !_deviceConnected) {
-        delay(500);  // Brief pause to let the BLE stack settle
-        _pServer->startAdvertising();
-        Serial.println("[BLE] Client disconnected. Re-advertising...");
+    const uint32_t count = _pServer->getConnectedCount();
+
+    if (count != _oldCount) {
+        Serial.printf("[BLE] Clients connected: %u/%u\n",
+                      (unsigned)count, (unsigned)BLE_MAX_CLIENTS);
+
+        // BLE stops advertising the moment a connection is established.  The
+        // previous version only restarted it after a disconnect, which is why
+        // a second client could never even discover the device.
+        if (count > _oldCount) _advertising = false;
+        _oldCount = count;
+
+        if (count < BLE_MAX_CLIENTS && !_advertising) {
+            _advertisePending = true;
+            _advertiseSetAtMs = millis();
+        } else if (count >= BLE_MAX_CLIENTS) {
+            _advertisePending = false;  // full — stop offering a slot
+            Serial.println("[BLE] All client slots taken.");
+        }
     }
 
-    // A new client has just connected
-    if (!_oldConnected && _deviceConnected) {
-        Serial.println("[BLE] Client connected.");
+    if (_advertisePending && millis() - _advertiseSetAtMs >= BLE_ADV_RESTART_DELAY_MS) {
+        _advertisePending = false;
+        // Re-check: a slot may have filled while we waited out the settle time.
+        if (_pServer->getConnectedCount() < BLE_MAX_CLIENTS) {
+            _pServer->startAdvertising();
+            _advertising = true;
+            Serial.println("[BLE] Advertising — a client slot is free.");
+        }
     }
 
-    _oldConnected = _deviceConnected;
-
-    // A new LED command arrived — tell every subscriber what the ring now shows.
-    if (_statePublishPending) {
-        _statePublishPending = false;
-        publishState();
-    }
-
-    // Request a short connection interval so the Windows GATT stack can
-    // complete service discovery without timing out.  Windows defaults to
-    // 698–2500 ms which triggers ERROR_BAD_COMMAND (0x80070016) on the app side.
-    // We send this one tick after onConnect so the BLE stack has settled.
-    if (_connParamUpdatePending) {
-        _connParamUpdatePending = false;
+    // Request a short connection interval for each freshly connected client so
+    // the Windows GATT stack can complete service discovery without timing out.
+    // Windows defaults to 698–2500 ms, which triggers ERROR_BAD_COMMAND
+    // (0x80070016) on the app side.  Sent a tick after onConnect so the BLE
+    // stack has settled — and never from inside the callback itself.
+    for (auto& slot : _pendingConnParams) {
+        if (!slot.active) continue;
+        slot.active = false;
 #if defined(CONFIG_BLUEDROID_ENABLED)
-        _pServer->updateConnParams(_remoteBda,
+        _pServer->updateConnParams(slot.bda.data(),
             BLE_CONN_INTERVAL_MIN, BLE_CONN_INTERVAL_MAX,
             BLE_CONN_LATENCY, BLE_CONN_TIMEOUT);
 #elif defined(CONFIG_NIMBLE_ENABLED)
-        _pServer->updateConnParams(_connHandle,
+        _pServer->updateConnParams(slot.handle,
             BLE_CONN_INTERVAL_MIN, BLE_CONN_INTERVAL_MAX,
             BLE_CONN_LATENCY, BLE_CONN_TIMEOUT);
 #endif
@@ -226,6 +243,19 @@ void BleServer::update() {
                       (unsigned)(BLE_CONN_INTERVAL_MIN * 5 / 4),
                       (unsigned)(BLE_CONN_INTERVAL_MAX * 5 / 4));
     }
+
+    // A new LED command arrived — tell every subscriber what the ring now shows.
+    if (_statePublishPending) {
+        _statePublishPending = false;
+        publishState();
+    }
+}
+
+BleServer::PendingConnParam* BleServer::freeConnParamSlot() {
+    for (auto& slot : _pendingConnParams) {
+        if (!slot.active) return &slot;
+    }
+    return nullptr;  // every slot pending — the connection limit prevents this
 }
 
 // ============================================================
@@ -233,7 +263,9 @@ void BleServer::update() {
 // ============================================================
 
 bool BleServer::isConnected() const {
-    return _deviceConnected;
+    // True while ANY client holds the link.  loop() uses this for the LED hold
+    // and the status LED, so both must only react when the LAST client leaves.
+    return _pServer != nullptr && _pServer->getConnectedCount() > 0;
 }
 
 // ============================================================
@@ -250,7 +282,8 @@ void BleServer::publishState() {
     _pStateChar->setValue(buf.data(), buf.size());
 
     // A READ always works; NOTIFY only means anything with a client attached.
-    if (_deviceConnected) _pStateChar->notify();
+    // notify() reaches every subscriber, so both clients stay in sync.
+    if (isConnected()) _pStateChar->notify();
 }
 
 // ============================================================
@@ -258,7 +291,7 @@ void BleServer::publishState() {
 // ============================================================
 
 void BleServer::updateTelemetry() {
-    if (!_deviceConnected) return;
+    if (!isConnected()) return;
 
     unsigned long now = millis();
     if (now - _lastTelemetryNotifyMs < BATTERY_NOTIFY_INTERVAL_MS) return;

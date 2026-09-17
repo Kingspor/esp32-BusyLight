@@ -7,6 +7,7 @@ import {
   saveLastDevice, loadLastDevice, clearLastDevice,
   reconnectDelayMs, RECONNECT_DELAYS_MS,
   parseState, matchPreset, STATE_CHAR_UUID,
+  withTimeout, CONNECT_TIMEOUT_MS,
 } from '../busylight-core.js';
 
 // Node has no localStorage without --experimental-webstorage, so the storage
@@ -446,5 +447,35 @@ describe('STATE_CHAR_UUID', () => {
   test('does not collide with the other characteristics', () => {
     const all = [SERVICE_UUID, LED_CHAR_UUID, TELEMETRY_CHAR_UUID, STATE_CHAR_UUID];
     assert.equal(new Set(all).size, all.length);
+  });
+});
+
+// ── withTimeout ───────────────────────────────────────────────────────────────
+describe('withTimeout', () => {
+  test('passes a value through when the promise wins', async () => {
+    assert.equal(await withTimeout(Promise.resolve('da'), 1000), 'da');
+  });
+
+  test('passes a rejection through unchanged', async () => {
+    const boom = new Error('NotFoundError');
+    await assert.rejects(withTimeout(Promise.reject(boom), 1000), err => err === boom);
+  });
+
+  test('rejects once the deadline passes', async () => {
+    // The case this exists for: gatt.connect() against a device that is not
+    // advertising never settles on its own.
+    const never = new Promise(() => {});
+    await assert.rejects(withTimeout(never, 10, 'abgelaufen'), /abgelaufen/);
+  });
+
+  test('clears its timer, so a resolved call leaves nothing pending', async () => {
+    // A leaked timer would keep the Node event loop (and the phone) awake; the
+    // test run itself hanging afterwards is the signal.
+    await withTimeout(Promise.resolve(1), 60_000);
+  });
+
+  test('the connect deadline is long enough for a real connect, short enough to retry', () => {
+    assert.ok(CONNECT_TIMEOUT_MS >= 5000);
+    assert.ok(CONNECT_TIMEOUT_MS <= 30_000);
   });
 });

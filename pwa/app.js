@@ -6,6 +6,7 @@ import {
   DEFAULT_BRIGHTNESS,
   loadPresets, savePreset, resetPreset,
   saveLastDevice, loadLastDevice, clearLastDevice, reconnectDelayMs,
+  withTimeout, CONNECT_TIMEOUT_MS,
 } from './busylight-core.js';
 
 // ── State ────────────────────────────────────────────────────────────────────
@@ -27,6 +28,11 @@ let reconnectTimer   = null;
 let reconnectAttempt = 0;
 let reconnecting     = false;
 let userDisconnected = false;  // true only after the user pressed "Trennen"/"Stopp"
+// True while an attempt is actually talking to the device.  Two overlapping
+// gatt.connect() calls on one device duplicate the characteristic listeners and
+// leave the loser in an undefined state, so every path that could start an
+// attempt checks this first.
+let connectInFlight  = false;
 
 // ── Boot ─────────────────────────────────────────────────────────────────────
 function init() {
@@ -279,11 +285,23 @@ function scheduleReconnect() {
   reconnectTimer = setTimeout(async () => {
     reconnectTimer = null;
     if (!bleDevice || userDisconnected) return;
+    // An attempt is already running — it will chain the next one itself.
+    if (connectInFlight) return;
+
+    connectInFlight = true;
     try {
-      await openDevice(bleDevice);
+      // Bounded, because gatt.connect() against a device that is not
+      // advertising can stay pending forever and would take the whole retry
+      // chain down with it.
+      await withTimeout(openDevice(bleDevice), CONNECT_TIMEOUT_MS);
       showToast(`Wieder verbunden mit ${deviceLabel(bleDevice)}`);
     } catch {
+      // Drop whatever is still half-open so the next attempt starts clean —
+      // the attempt we gave up on may yet complete in the background.
+      try { bleDevice.gatt?.disconnect(); } catch {}
       scheduleReconnect();  // never gives up; the delay just stops growing
+    } finally {
+      connectInFlight = false;
     }
   }, delay);
 }
@@ -297,6 +315,9 @@ function cancelReconnect() {
 function onVisibilityChange() {
   if (document.visibilityState !== 'visible') return;
   if (userDisconnected || !bleDevice || bleDevice.gatt?.connected) return;
+  // An attempt is already under way — restarting the backoff here would run a
+  // second one alongside it.
+  if (connectInFlight) return;
 
   // Restart the backoff so returning to the app retries almost immediately.
   reconnectAttempt = 0;

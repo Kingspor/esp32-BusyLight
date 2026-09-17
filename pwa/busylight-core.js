@@ -219,3 +219,35 @@ export function reconnectDelayMs(attempt) {
   const i = Math.min(Math.max(attempt, 0), RECONNECT_DELAYS_MS.length - 1);
   return RECONNECT_DELAYS_MS[i];
 }
+
+// ── Connect watchdog ──────────────────────────────────────────────────────────
+
+// How long a single connection attempt may run before it is given up on.
+//
+// gatt.connect() has no timeout of its own: against a device that is switched
+// off, out of range or simply not advertising, the promise can stay pending
+// indefinitely.  The reconnect chain schedules its next attempt from that
+// promise settling, so one hung call is enough to stop the retries altogether —
+// the phone then sits there looking like it is reconnecting and never does.
+export const CONNECT_TIMEOUT_MS = 15000;
+
+/**
+ * Resolve/reject with `promise`, but reject after `ms` at the latest.
+ *
+ * The original promise is not cancellable — callers are expected to tear the
+ * GATT connection down themselves so an attempt that arrives late cannot
+ * collide with the next one.
+ *
+ * @template T
+ * @param {Promise<T>} promise
+ * @param {number} ms
+ * @param {string} [message]
+ * @returns {Promise<T>}
+ */
+export function withTimeout(promise, ms, message = 'Zeitüberschreitung') {
+  let timer = null;
+  const timeout = new Promise((_, reject) => {
+    timer = setTimeout(() => reject(new Error(message)), ms);
+  });
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
+}

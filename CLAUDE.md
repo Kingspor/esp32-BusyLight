@@ -99,7 +99,10 @@ Merge a PR to `main` with a bumped `<Version>` in `BusyLight.csproj` → `auto-r
   characteristic (read on connect, then followed via NOTIFY), not from what the app last
   sent — so it stays right across reconnects, reboots and changes made by the Windows app.
   Against firmware without the characteristic the highlight simply stays cleared.
-- **Auto-reconnect**: the last device's opaque Web Bluetooth ID is stored in
+- **Auto-reconnect**: every attempt is bounded by `CONNECT_TIMEOUT_MS` — `gatt.connect()`
+  has no timeout of its own and stays pending forever against a device that is not
+  advertising, which would stall the retry chain that schedules itself from that promise
+  settling. The last device's opaque Web Bluetooth ID is stored in
   `localStorage`. On start-up `navigator.bluetooth.getDevices()` finds it again among
   the origin's permitted devices and connects without the picker. Unexpected drops
   retry with a growing delay (1 s → 30 s cap) until the device is back or the user

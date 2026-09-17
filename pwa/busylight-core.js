@@ -97,26 +97,82 @@ export function parseState(dataView) {
   };
 }
 
+/** Animation mode whose colour bytes the firmware ignores. */
+const RAINBOW_MODE = 3;
+
+/**
+ * How far two normalised colour channels may differ and still count as the same
+ * colour.  Small on purpose: it absorbs palettes that disagree slightly (255,170,0
+ * here against 255,165,0 in the Windows app for "abwesend") without letting two
+ * distinct statuses collide.
+ */
+export const COLOUR_CHANNEL_TOLERANCE = 24;
+
+/** True when the ring is dark, whatever colour is nominally set behind it. */
+export function isDark(c) {
+  return c.brightness === 0 || (c.r === 0 && c.g === 0 && c.b === 0);
+}
+
+/**
+ * The colour scaled so its strongest channel is 255.  Strips intensity and leaves
+ * the hue: 0,200,0 and 0,255,0 both become 0,255,0 — which is the same judgement a
+ * person makes when calling both of them green.
+ * @param {object} c Anything with r, g, b
+ */
+export function normalisedColour(c) {
+  const max = Math.max(c.r, c.g, c.b);
+  if (max === 0) return { r: 0, g: 0, b: 0 };
+  return {
+    r: Math.round((c.r * 255) / max),
+    g: Math.round((c.g * 255) / max),
+    b: Math.round((c.b * 255) / max),
+  };
+}
+
+/**
+ * True when two commands look the same on the ring.
+ *
+ * Not a byte comparison, deliberately.  The Windows app and this PWA do not share a
+ * palette — it sends 0,255,0 for "available" where this app sends 0,200,0 — and
+ * brightness is per-client taste: the tray applies its configured cap, the phone its
+ * own slider.  Compared byte for byte, neither client would ever recognise a status
+ * the other one set, which is the entire purpose of the state characteristic.
+ */
+export function sameAppearance(a, b) {
+  if (!a || !b) return false;
+
+  // A dark ring is a dark ring.  Which colour sits behind brightness 0 makes no
+  // difference to anyone looking at it — and here too the clients disagree: "Aus" is
+  // 0,0,0 in this app and blue-at-zero-brightness in the tray's configuration.
+  if (isDark(a) || isDark(b)) return isDark(a) && isDark(b);
+
+  // Two presets can share a colour and differ only in animation (Besetzt vs. Nicht
+  // stören), so the mode still has to agree exactly.
+  if (a.mode !== b.mode) return false;
+
+  // Rainbow cycles the spectrum and ignores the colour bytes, so comparing them
+  // would reject two rings that look identical.
+  if (a.mode === RAINBOW_MODE) return true;
+
+  const na = normalisedColour(a);
+  const nb = normalisedColour(b);
+
+  return Math.abs(na.r - nb.r) <= COLOUR_CHANNEL_TOLERANCE
+      && Math.abs(na.g - nb.g) <= COLOUR_CHANNEL_TOLERANCE
+      && Math.abs(na.b - nb.b) <= COLOUR_CHANNEL_TOLERANCE;
+}
+
 /**
  * Find which preset a device state corresponds to, so the UI can highlight it.
- * Matches on all six bytes: two presets can share a colour and differ only in
- * mode (Besetzt vs. Nicht stören), so a colour-only match would pick the wrong
- * one. Returns null for a state set through the manual controls, which is not
- * a preset and should leave every button unhighlighted.
+ * Returns null for a colour that is no preset — a manual one from the wheel, or one
+ * the Windows app set from a status this app does not know.
  * @param {object} state    Result of parseState()
  * @param {object[]} presets Presets to match against — pass the user's edited set
  * @returns {string|null} The matching preset id, or null
  */
 export function matchPreset(state, presets) {
   if (!state || !Array.isArray(presets)) return null;
-  const found = presets.find(p =>
-    p.r          === state.r          &&
-    p.g          === state.g          &&
-    p.b          === state.b          &&
-    p.brightness === state.brightness &&
-    p.mode       === state.mode       &&
-    p.speed      === state.speed
-  );
+  const found = presets.find(p => sameAppearance(p, state));
   return found ? found.id : null;
 }
 

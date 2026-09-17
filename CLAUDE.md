@@ -63,10 +63,21 @@ Merge a PR to `main` with a bumped `<Version>` in `BusyLight.csproj` → `auto-r
 - **`TrayApplication.cs`**: Root `ApplicationContext` — owns tray icon, context menu, all services, presence/BLE history tracking. No main window.
 - **Service layer** (`Services/`): Three independent services raise events consumed by `TrayApplication`:
   - `GraphService`: MSAL OAuth2 → Microsoft Graph `Presence.Read` polling (default 30s). Raises `PresenceChanged`.
-  - `BleService`: BLE scan/connect/send. Raises `ConnectionChanged` and `ErrorOccurred`. Only restarts when the device address changes (ADR-005).
+  - `BleService`: BLE scan/connect/send. Raises `ConnectionChanged`, `ErrorOccurred` and
+    `DeviceStateChanged`. Only restarts when the device address changes (ADR-005). It
+    follows the device's state characteristic — read on connect, then NOTIFY, plus a
+    30 s reconciling read because an ATT notification is unacknowledged. Echoes of its
+    own writes are filtered out before the event fires.
   - `ConfigurationService`: Reads/writes `%APPDATA%\BusyLight\appsettings.json`. Settings saves are non-disruptive to BLE.
 - **Forms layer** (`Forms/`): `StatusForm`, `SettingsForm`, `HistoryForm`, `ColorWheelForm`, `BlePickerForm` — all opened on demand from the tray menu.
 - **Configuration-driven LED mapping**: `AppSettings.cs` holds a per-presence-status mapping (color, mode, speed, brightness). Adding a new Teams status only requires a new entry in `appsettings.json`.
+- **A status set by another client is adopted** as the tray's active override
+  (`TrayApplication.OnDeviceStateChanged`), so the tray shows the truth and stops
+  overwriting the phone on the next reconnect. Matching is on *appearance*, never on
+  bytes: the clients ship different palettes (`0,200,0` vs `0,255,0` for available) and
+  brightness is per-client, so `LedCommand.MatchesAppearance` compares the colour
+  normalised to its strongest channel, plus the mode. A colour no entry matches is left
+  alone rather than guessed at.
 - **Teams is optional**: where no app registration can be had, `AuthenticateAsync`
   failing is an expected state, not a startup error — the tray then runs on the Override
   submenu alone. `_graphService` stays null in that case so the `?.` guards at every call
@@ -103,6 +114,14 @@ Merge a PR to `main` with a bumped `<Version>` in `BusyLight.csproj` → `auto-r
   characteristic (read on connect, then followed via NOTIFY), not from what the app last
   sent — so it stays right across reconnects, reboots and changes made by the Windows app.
   Against firmware without the characteristic the highlight simply stays cleared.
+  The active preset carries a tick badge, a white rim and dims the others; colour alone
+  cannot carry it, because the buttons are already coloured. A status line names it in
+  words, which is also the only way to show a colour that matches no preset
+  (`Aktiv: Eigene Farbe`) or an unknown state.
+- **`sameAppearance` / `matchPreset`**: two clients agree on a status, never on bytes.
+  Matching normalises the colour to its strongest channel and requires the same mode;
+  brightness and speed are per-client taste, a dark ring matches any dark ring, and
+  rainbow ignores the colour bytes exactly as the firmware does.
 - **Auto-reconnect**: every attempt is bounded by `CONNECT_TIMEOUT_MS` — `gatt.connect()`
   has no timeout of its own and stays pending forever against a device that is not
   advertising, which would stall the retry chain that schedules itself from that promise

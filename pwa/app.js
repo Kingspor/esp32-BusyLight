@@ -84,6 +84,7 @@ function buildPresetGrid() {
     btn.className        = 'preset-btn';
     btn.id               = `preset-${p.id}`;
     btn.disabled         = true;
+    btn.setAttribute('aria-pressed', 'false');
     btn.style.background = p.bg;
     btn.innerHTML        = `<div class="preset-dot"></div><span class="preset-label">${p.label}</span>`;
     btn.addEventListener('click', () => sendPreset(activePresets.find(x => x.id === p.id)));
@@ -232,14 +233,17 @@ async function subscribeState(service) {
       applyDeviceState(parseState(e.target.value))
     );
   } catch {
+    // Firmware without the characteristic: we cannot know what the ring shows, and
+    // saying so is better than showing a highlight we just made up.
     stateChar = null;
     clearActivePreset();
+    setActiveStatus('Status unbekannt (alte Firmware)', null);
   }
 }
 
 /** Highlight whichever preset the device's current command corresponds to. */
 function applyDeviceState(state) {
-  highlightPreset(matchPreset(state, activePresets));
+  highlightPreset(matchPreset(state, activePresets), state);
 }
 
 function handleConnectFailure(err) {
@@ -258,7 +262,7 @@ function onDisconnected() {
   ledChar       = null;
   telemetryChar = null;
   stateChar     = null;
-  clearActivePreset();
+  highlightPreset(null);
 
   if (userDisconnected) {
     setConnectionState('disconnected');
@@ -403,14 +407,54 @@ function updateBattery({ mv, soc }) {
 }
 
 function clearActivePreset() {
-  document.querySelectorAll('.preset-btn').forEach(b => b.classList.remove('active'));
+  document.querySelectorAll('.preset-btn').forEach(b => {
+    b.classList.remove('active');
+    b.setAttribute('aria-pressed', 'false');
+  });
+  document.getElementById('presetGrid').classList.remove('has-active');
 }
 
-/** Mark exactly one preset as active, or none when id is null. */
-function highlightPreset(id) {
+/**
+ * Mark exactly one preset as active, or none when `id` is null, and name the current
+ * status in words.
+ *
+ * The grid highlight answers "which button"; the status line answers "what is the ring
+ * doing", which the grid cannot when the colour came from the wheel or from the Windows
+ * app.  `state` is the device's own 6-byte state where we have it, so a colour that
+ * matches no preset can still be shown truthfully instead of silently clearing.
+ */
+function highlightPreset(id, state = null) {
   clearActivePreset();
-  if (!id) return;
-  document.getElementById(`preset-${id}`)?.classList.add('active');
+
+  if (id) {
+    const btn = document.getElementById(`preset-${id}`);
+    btn?.classList.add('active');
+    btn?.setAttribute('aria-pressed', 'true');
+    document.getElementById('presetGrid').classList.add('has-active');
+
+    const preset = activePresets.find(p => p.id === id);
+    setActiveStatus(preset?.label ?? id,
+                    preset ? `rgb(${preset.r},${preset.g},${preset.b})` : null);
+    return;
+  }
+
+  if (state) {
+    setActiveStatus('Eigene Farbe', `rgb(${state.r},${state.g},${state.b})`);
+    return;
+  }
+
+  setActiveStatus(bleDevice?.gatt?.connected ? 'Status unbekannt' : 'Nicht verbunden', null);
+}
+
+/** Write the status line.  A null colour means "we do not know", not "black". */
+function setActiveStatus(text, color) {
+  const swatch = document.getElementById('activeSwatch');
+  const label  = document.getElementById('activeText');
+
+  label.textContent = color ? `Aktiv: ${text}` : text;
+  label.classList.toggle('muted', !color);
+  swatch.classList.toggle('filled', Boolean(color));
+  swatch.style.background = color || 'transparent';
 }
 
 function selectMode(id) {
@@ -453,7 +497,7 @@ async function sendManual() {
   const speed        = parseInt(document.getElementById('speed').value, 10);
   const ok           = await sendCommand(r, g, b, brightness, selectedMode, speed);
   if (ok) {
-    highlightPreset(null);  // a manual colour is no preset
+    highlightPreset(null, { r, g, b });  // no preset, but still worth naming
     showToast('Gesendet');
   }
 }

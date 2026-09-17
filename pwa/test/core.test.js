@@ -8,6 +8,7 @@ import {
   reconnectDelayMs, RECONNECT_DELAYS_MS,
   parseState, matchPreset, STATE_CHAR_UUID,
   withTimeout, CONNECT_TIMEOUT_MS,
+  isDark, normalisedColour, sameAppearance,
 } from '../busylight-core.js';
 
 // Node has no localStorage without --experimental-webstorage, so the storage
@@ -406,12 +407,42 @@ describe('matchPreset', () => {
     assert.equal(matchPreset(manual, PRESETS), null);
   });
 
-  test('a single differing byte prevents a match', () => {
+  test('brightness and speed do not decide the status', () => {
+    // The tray caps brightness and the phone has its own slider, so insisting on
+    // those bytes would mean neither client ever recognises the other's status.
     const p = PRESETS.find(x => x.id === 'available');
-    for (const field of ['r', 'g', 'b', 'brightness', 'mode', 'speed']) {
-      const off = { ...stateOf(p), [field]: stateOf(p)[field] === 7 ? 8 : 7 };
-      assert.equal(matchPreset(off, PRESETS), null, `differing ${field} still matched`);
+    assert.equal(
+      matchPreset({ ...stateOf(p), brightness: 20, speed: 3 }, PRESETS),
+      'available',
+    );
+  });
+
+  test('a different colour or mode still prevents a match', () => {
+    const p = PRESETS.find(x => x.id === 'available');
+    assert.equal(matchPreset({ ...stateOf(p), r: 0, g: 0, b: 200 }, PRESETS), null);
+    assert.equal(matchPreset({ ...stateOf(p), mode: 2 }, PRESETS), null);
+  });
+
+  test('recognises the statuses the Windows app sends', () => {
+    // The tray ships its own presence map and caps brightness, so none of these
+    // agree byte for byte with this app's presets.  This is the case the whole
+    // state characteristic exists for.
+    const fromTray = [
+      ['available', { r: 0,   g: 255, b: 0,   brightness: 69, mode: 0, speed: 221 }],
+      ['busy',      { r: 255, g: 0,   b: 0,   brightness: 83, mode: 0, speed: 0   }],
+      ['dnd',       { r: 255, g: 0,   b: 0,   brightness: 61, mode: 1, speed: 0   }],
+      ['away',      { r: 255, g: 165, b: 0,   brightness: 53, mode: 1, speed: 60  }],
+      ['brb',       { r: 255, g: 165, b: 0,   brightness: 53, mode: 4, speed: 40  }],
+    ];
+    for (const [id, state] of fromTray) {
+      assert.equal(matchPreset(state, PRESETS), id, `tray status ${id}`);
     }
+  });
+
+  test('a dark ring matches "Aus" however it was darkened', () => {
+    // The tray's "Offline" entry is blue at brightness 0; "Aus" here is 0,0,0.
+    const trayOffline = { r: 0, g: 0, b: 255, brightness: 0, mode: 0, speed: 0 };
+    assert.equal(matchPreset(trayOffline, PRESETS), 'off');
   });
 
   test('matches against edited presets, not the built-in defaults', () => {
@@ -477,5 +508,46 @@ describe('withTimeout', () => {
   test('the connect deadline is long enough for a real connect, short enough to retry', () => {
     assert.ok(CONNECT_TIMEOUT_MS >= 5000);
     assert.ok(CONNECT_TIMEOUT_MS <= 30_000);
+  });
+});
+
+// ── Appearance comparison ─────────────────────────────────────────────────────
+describe('sameAppearance', () => {
+  const at = (r, g, b, brightness = 128, mode = 0, speed = 0) =>
+    ({ r, g, b, brightness, mode, speed });
+
+  test('normalisedColour strips intensity and keeps the hue', () => {
+    assert.deepEqual(normalisedColour({ r: 0, g: 200, b: 0 }), { r: 0, g: 255, b: 0 });
+    assert.deepEqual(normalisedColour({ r: 0, g: 255, b: 0 }), { r: 0, g: 255, b: 0 });
+    assert.deepEqual(normalisedColour({ r: 100, g: 50, b: 0 }), { r: 255, g: 128, b: 0 });
+  });
+
+  test('normalisedColour does not divide by zero on black', () => {
+    assert.deepEqual(normalisedColour({ r: 0, g: 0, b: 0 }), { r: 0, g: 0, b: 0 });
+  });
+
+  test('isDark covers both ways a ring goes dark', () => {
+    assert.ok(isDark(at(0, 0, 0, 0)));
+    assert.ok(isDark(at(255, 0, 0, 0)));   // brightness 0 beats any colour
+    assert.ok(isDark(at(0, 0, 0, 200)));   // black beats any brightness
+    assert.ok(!isDark(at(0, 200, 0, 128)));
+  });
+
+  test('two shades of the same colour are the same status', () => {
+    assert.ok(sameAppearance(at(0, 200, 0), at(0, 255, 0)));
+  });
+
+  test('different hues are not', () => {
+    assert.ok(!sameAppearance(at(0, 255, 0), at(255, 0, 0)));
+    assert.ok(!sameAppearance(at(255, 165, 0), at(255, 0, 0)));
+  });
+
+  test('rainbow ignores the colour bytes, as the firmware does', () => {
+    assert.ok(sameAppearance(at(1, 2, 3, 128, 3), at(250, 40, 9, 128, 3)));
+  });
+
+  test('handles missing operands instead of throwing', () => {
+    assert.ok(!sameAppearance(null, at(0, 255, 0)));
+    assert.ok(!sameAppearance(at(0, 255, 0), undefined));
   });
 });

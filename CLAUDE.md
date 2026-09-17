@@ -63,10 +63,31 @@ Merge a PR to `main` with a bumped `<Version>` in `BusyLight.csproj` → `auto-r
 - **`TrayApplication.cs`**: Root `ApplicationContext` — owns tray icon, context menu, all services, presence/BLE history tracking. No main window.
 - **Service layer** (`Services/`): Three independent services raise events consumed by `TrayApplication`:
   - `GraphService`: MSAL OAuth2 → Microsoft Graph `Presence.Read` polling (default 30s). Raises `PresenceChanged`.
-  - `BleService`: BLE scan/connect/send. Raises `ConnectionChanged` and `ErrorOccurred`. Only restarts when the device address changes (ADR-005).
+  - `BleService`: BLE scan/connect/send. Raises `ConnectionChanged`, `ErrorOccurred` and
+    `DeviceStateChanged`. Only restarts when the device address changes (ADR-005). It
+    follows the device's state characteristic — read on connect, then NOTIFY, plus a
+    30 s reconciling read because an ATT notification is unacknowledged. Echoes of its
+    own writes are filtered out before the event fires.
   - `ConfigurationService`: Reads/writes `%APPDATA%\BusyLight\appsettings.json`. Settings saves are non-disruptive to BLE.
 - **Forms layer** (`Forms/`): `StatusForm`, `SettingsForm`, `HistoryForm`, `ColorWheelForm`, `BlePickerForm` — all opened on demand from the tray menu.
 - **Configuration-driven LED mapping**: `AppSettings.cs` holds a per-presence-status mapping (color, mode, speed, brightness). Adding a new Teams status only requires a new entry in `appsettings.json`.
+- **A status set by another client is adopted** as the tray's active override
+  (`TrayApplication.OnDeviceStateChanged`), so the tray shows the truth and stops
+  overwriting the phone on the next reconnect. Matching is on *appearance*, never on
+  bytes: the clients ship different palettes (`0,200,0` vs `0,255,0` for available) and
+  brightness is per-client, so `LedCommand.MatchesAppearance` compares the colour
+  normalised to its strongest channel, plus the mode. A colour no entry matches is left
+  alone rather than guessed at.
+- **Battery readings are filtered for plausibility** (`BatteryReading.MinPlausibleMv`,
+  2500 mV). With USB plugged into the ESP the measured node collapses to ~1.7 V while
+  the cell is fine — a value no 18650 in service can have, since its protection cuts out
+  at 2.5–3.0 V. Such readings are dropped in `BleService.HandleBatteryReading`, the one
+  path the tooltip, settings window, history chart and low-battery warning all feed
+  from. The PWA applies the same floor (`isPlausibleBattery`) and shows `—`.
+- **Teams is optional**: where no app registration can be had, `AuthenticateAsync`
+  failing is an expected state, not a startup error — the tray then runs on the Override
+  submenu alone. `_graphService` stays null in that case so the `?.` guards at every call
+  site actually hold.
 - **Threading**: UI thread (WinForms message loop) + ThreadPool (Graph polling, BLE ops). All UI updates marshalled via captured `SynchronizationContext`.
 
 ### Firmware (C++/Arduino)
@@ -80,9 +101,13 @@ Merge a PR to `main` with a bumped `<Version>` in `BusyLight.csproj` → `auto-r
 - **Two clients at once** (`GattServer.cpp`): the Windows app and the PWA can hold the
   link simultaneously (`BLE_MAX_CLIENTS = 2`). BLE stops advertising on every established
   connection, so `update()` restarts it whenever a slot is free — without that, a second
-  client could never discover the device. The connection count comes from the BLE
-  library (`getConnectedCount()`), never from a local flag, and the LED hold arms only
-  when the **last** client leaves.
+  client could never discover the device. Neither the connection count nor the
+  advertising state is ever mirrored in a local flag: the count comes from the BLE
+  library (`getConnectedCount()`) and the advertising state from the radio
+  (`BLEAdvertising::isAdvertising()`), re-checked every tick. The library does **not**
+  re-advertise on its own (`m_advertiseOnDisconnect` defaults to `false`), so a flag that
+  drifted out of step left the device undiscoverable with nothing able to correct it.
+  The LED hold arms only when the **last** client leaves.
 - **`config.h`**: Single source of truth for BLE UUIDs, pin definitions, protocol version.
 
 ### PWA
@@ -95,7 +120,18 @@ Merge a PR to `main` with a bumped `<Version>` in `BusyLight.csproj` → `auto-r
   characteristic (read on connect, then followed via NOTIFY), not from what the app last
   sent — so it stays right across reconnects, reboots and changes made by the Windows app.
   Against firmware without the characteristic the highlight simply stays cleared.
-- **Auto-reconnect**: the last device's opaque Web Bluetooth ID is stored in
+  The active preset carries a tick badge, a white rim and dims the others; colour alone
+  cannot carry it, because the buttons are already coloured. A status line names it in
+  words, which is also the only way to show a colour that matches no preset
+  (`Aktiv: Eigene Farbe`) or an unknown state.
+- **`sameAppearance` / `matchPreset`**: two clients agree on a status, never on bytes.
+  Matching normalises the colour to its strongest channel and requires the same mode;
+  brightness and speed are per-client taste, a dark ring matches any dark ring, and
+  rainbow ignores the colour bytes exactly as the firmware does.
+- **Auto-reconnect**: every attempt is bounded by `CONNECT_TIMEOUT_MS` — `gatt.connect()`
+  has no timeout of its own and stays pending forever against a device that is not
+  advertising, which would stall the retry chain that schedules itself from that promise
+  settling. The last device's opaque Web Bluetooth ID is stored in
   `localStorage`. On start-up `navigator.bluetooth.getDevices()` finds it again among
   the origin's permitted devices and connects without the picker. Unexpected drops
   retry with a growing delay (1 s → 30 s cap) until the device is back or the user

@@ -80,6 +80,22 @@ export function parseTelemetry(dataView) {
 }
 
 /**
+ * Below this a reading is not a low battery but a broken measurement.
+ *
+ * A Li-Ion 18650 in service never gets here — its protection circuit cuts out between
+ * 2.5 and 3.0 V, and the step-up converter gives up well before that, so a cell this
+ * low could not be powering the device that reports it. What does produce such values
+ * is USB being plugged into the ESP: the measured node then collapses to around 1.7 V
+ * while the cell itself is fine.
+ */
+export const MIN_PLAUSIBLE_BATTERY_MV = 2500;
+
+/** False when a telemetry reading cannot be a real cell voltage. */
+export function isPlausibleBattery(reading) {
+  return Boolean(reading) && reading.mv >= MIN_PLAUSIBLE_BATTERY_MV;
+}
+
+/**
  * Parse the 6-byte state DataView — the command the ring is currently showing.
  * Same byte layout as the LED command packet, so the device reports its state
  * in exactly the format it accepts.
@@ -97,26 +113,82 @@ export function parseState(dataView) {
   };
 }
 
+/** Animation mode whose colour bytes the firmware ignores. */
+const RAINBOW_MODE = 3;
+
+/**
+ * How far two normalised colour channels may differ and still count as the same
+ * colour.  Small on purpose: it absorbs palettes that disagree slightly (255,170,0
+ * here against 255,165,0 in the Windows app for "abwesend") without letting two
+ * distinct statuses collide.
+ */
+export const COLOUR_CHANNEL_TOLERANCE = 24;
+
+/** True when the ring is dark, whatever colour is nominally set behind it. */
+export function isDark(c) {
+  return c.brightness === 0 || (c.r === 0 && c.g === 0 && c.b === 0);
+}
+
+/**
+ * The colour scaled so its strongest channel is 255.  Strips intensity and leaves
+ * the hue: 0,200,0 and 0,255,0 both become 0,255,0 — which is the same judgement a
+ * person makes when calling both of them green.
+ * @param {object} c Anything with r, g, b
+ */
+export function normalisedColour(c) {
+  const max = Math.max(c.r, c.g, c.b);
+  if (max === 0) return { r: 0, g: 0, b: 0 };
+  return {
+    r: Math.round((c.r * 255) / max),
+    g: Math.round((c.g * 255) / max),
+    b: Math.round((c.b * 255) / max),
+  };
+}
+
+/**
+ * True when two commands look the same on the ring.
+ *
+ * Not a byte comparison, deliberately.  The Windows app and this PWA do not share a
+ * palette — it sends 0,255,0 for "available" where this app sends 0,200,0 — and
+ * brightness is per-client taste: the tray applies its configured cap, the phone its
+ * own slider.  Compared byte for byte, neither client would ever recognise a status
+ * the other one set, which is the entire purpose of the state characteristic.
+ */
+export function sameAppearance(a, b) {
+  if (!a || !b) return false;
+
+  // A dark ring is a dark ring.  Which colour sits behind brightness 0 makes no
+  // difference to anyone looking at it — and here too the clients disagree: "Aus" is
+  // 0,0,0 in this app and blue-at-zero-brightness in the tray's configuration.
+  if (isDark(a) || isDark(b)) return isDark(a) && isDark(b);
+
+  // Two presets can share a colour and differ only in animation (Besetzt vs. Nicht
+  // stören), so the mode still has to agree exactly.
+  if (a.mode !== b.mode) return false;
+
+  // Rainbow cycles the spectrum and ignores the colour bytes, so comparing them
+  // would reject two rings that look identical.
+  if (a.mode === RAINBOW_MODE) return true;
+
+  const na = normalisedColour(a);
+  const nb = normalisedColour(b);
+
+  return Math.abs(na.r - nb.r) <= COLOUR_CHANNEL_TOLERANCE
+      && Math.abs(na.g - nb.g) <= COLOUR_CHANNEL_TOLERANCE
+      && Math.abs(na.b - nb.b) <= COLOUR_CHANNEL_TOLERANCE;
+}
+
 /**
  * Find which preset a device state corresponds to, so the UI can highlight it.
- * Matches on all six bytes: two presets can share a colour and differ only in
- * mode (Besetzt vs. Nicht stören), so a colour-only match would pick the wrong
- * one. Returns null for a state set through the manual controls, which is not
- * a preset and should leave every button unhighlighted.
+ * Returns null for a colour that is no preset — a manual one from the wheel, or one
+ * the Windows app set from a status this app does not know.
  * @param {object} state    Result of parseState()
  * @param {object[]} presets Presets to match against — pass the user's edited set
  * @returns {string|null} The matching preset id, or null
  */
 export function matchPreset(state, presets) {
   if (!state || !Array.isArray(presets)) return null;
-  const found = presets.find(p =>
-    p.r          === state.r          &&
-    p.g          === state.g          &&
-    p.b          === state.b          &&
-    p.brightness === state.brightness &&
-    p.mode       === state.mode       &&
-    p.speed      === state.speed
-  );
+  const found = presets.find(p => sameAppearance(p, state));
   return found ? found.id : null;
 }
 
@@ -218,4 +290,36 @@ export const RECONNECT_DELAYS_MS = [1000, 2000, 4000, 8000, 15000, 30000];
 export function reconnectDelayMs(attempt) {
   const i = Math.min(Math.max(attempt, 0), RECONNECT_DELAYS_MS.length - 1);
   return RECONNECT_DELAYS_MS[i];
+}
+
+// ── Connect watchdog ──────────────────────────────────────────────────────────
+
+// How long a single connection attempt may run before it is given up on.
+//
+// gatt.connect() has no timeout of its own: against a device that is switched
+// off, out of range or simply not advertising, the promise can stay pending
+// indefinitely.  The reconnect chain schedules its next attempt from that
+// promise settling, so one hung call is enough to stop the retries altogether —
+// the phone then sits there looking like it is reconnecting and never does.
+export const CONNECT_TIMEOUT_MS = 15000;
+
+/**
+ * Resolve/reject with `promise`, but reject after `ms` at the latest.
+ *
+ * The original promise is not cancellable — callers are expected to tear the
+ * GATT connection down themselves so an attempt that arrives late cannot
+ * collide with the next one.
+ *
+ * @template T
+ * @param {Promise<T>} promise
+ * @param {number} ms
+ * @param {string} [message]
+ * @returns {Promise<T>}
+ */
+export function withTimeout(promise, ms, message = 'Zeitüberschreitung') {
+  let timer = null;
+  const timeout = new Promise((_, reject) => {
+    timer = setTimeout(() => reject(new Error(message)), ms);
+  });
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
 }

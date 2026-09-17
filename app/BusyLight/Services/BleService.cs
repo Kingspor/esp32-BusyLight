@@ -33,6 +33,19 @@ public sealed class BleService : IDisposable
     private static readonly Guid ProtocolVerCharUuid =
         Guid.Parse("feda0103-51a7-4fb7-a27b-c720bef16ef7");
 
+    private static readonly Guid StateCharUuid =
+        Guid.Parse("feda0104-51a7-4fb7-a27b-c720bef16ef7");
+
+    /// <summary>
+    /// How often the device's state characteristic is re-read while connected.
+    ///
+    /// NOTIFY already carries every change, but an ATT notification is unacknowledged:
+    /// one lost packet and the two clients disagree until somebody changes something
+    /// again.  A slow reconciling read costs one tiny round trip per interval and puts
+    /// an upper bound on how long that disagreement can last.
+    /// </summary>
+    private const int StatePollIntervalSeconds = 30;
+
     /// <summary>
     /// Protocol version this app build expects from the firmware.
     /// Must match <c>PROTOCOL_VERSION</c> in <c>firmware/BusyLight/config.h</c>.
@@ -55,6 +68,13 @@ public sealed class BleService : IDisposable
     /// Raised when a new battery telemetry packet is received (notify or initial read).
     /// </summary>
     public event EventHandler<BatteryReading>? BatteryChanged;
+
+    /// <summary>
+    /// Raised when the ring shows something this app did not put there — i.e. another
+    /// client (the phone PWA) changed it.  Echoes of our own writes are filtered out
+    /// before this fires, so a handler never sees the app chasing itself.
+    /// </summary>
+    public event EventHandler<LedCommand>? DeviceStateChanged;
 
     // ── Public properties ─────────────────────────────────────────────────────
 
@@ -85,6 +105,13 @@ public sealed class BleService : IDisposable
     /// </summary>
     public BatteryReading? LastBatteryReading { get; private set; }
 
+    /// <summary>
+    /// What the ring is actually showing, as last reported by the device itself.
+    /// Null until the state characteristic has been read; also null against firmware
+    /// that predates it.
+    /// </summary>
+    public LedCommand? LastDeviceState { get; private set; }
+
     // ── Private state ─────────────────────────────────────────────────────────
 
     private readonly ulong?  _targetAddress;       // null = discovery mode
@@ -93,6 +120,7 @@ public sealed class BleService : IDisposable
     private BluetoothLEDevice?  _device;
     private GattCharacteristic? _ledChar;
     private GattCharacteristic? _telemetryChar;
+    private GattCharacteristic? _stateChar;
     private LedCommand?         _lastSentCommand;
 
     private BluetoothLEAdvertisementWatcher? _watcher;
@@ -107,6 +135,13 @@ public sealed class BleService : IDisposable
     /// disconnect so the next failure will be reported again.
     /// </summary>
     private bool _connectDiagnosticRaised;
+
+    /// <summary>
+    /// True once an implausible battery reading has been reported for this connection.
+    /// With USB attached every single notify is implausible, and one line per reading
+    /// would bury everything else in the log.
+    /// </summary>
+    private bool _implausibleBatteryLogged;
 
     /// <summary>Prevents concurrent connection attempts.</summary>
     private readonly SemaphoreSlim _connectLock = new(1, 1);
@@ -150,7 +185,10 @@ public sealed class BleService : IDisposable
         // for a fresh advertisement we guarantee that precondition is met.
         StartWatcher();
 
-        _ = Task.Run(() => RetryLoopAsync(_cts.Token));
+        // The token goes to Task.Run itself as well as into the loop body: without it,
+        // a Stop() falling between scheduling and starting would still run one pass.
+        _ = Task.Run(() => RetryLoopAsync(_cts.Token), _cts.Token);
+        _ = Task.Run(() => StatePollLoopAsync(_cts.Token), _cts.Token);
     }
 
     /// <summary>Stop scanning and the reconnect loop.</summary>
@@ -405,6 +443,11 @@ public sealed class BleService : IDisposable
             // Subscribe to battery telemetry notifications and read initial value.
             await SubscribeTelemetryAsync(service, charCacheMode).ConfigureAwait(false);
 
+            // Find out what the ring is showing *before* anything of ours is asserted.
+            // On a reconnect this is the only way to learn what another client changed
+            // while we were away — otherwise the tray would happily overwrite it.
+            await SubscribeStateAsync(service, charCacheMode).ConfigureAwait(false);
+
             LogService.Log($"[BLE:{DeviceName}] Connected.");
             _connectDiagnosticRaised = false;
             CurrentState = BleConnectionState.Connected;
@@ -619,14 +662,138 @@ public sealed class BleService : IDisposable
             LogService.Log($"[BLE:{DeviceName}] Could not enable telemetry notifications: {cccdResult}");
         }
 
-        // Read initial value so the UI shows something before the first notify fires
+        // Read the initial value so the UI shows something before the first notify.
+        // This used to parse the packet and throw the result away, so the promise in
+        // the comment was never kept — the tooltip stayed empty until the first notify,
+        // up to five minutes later.
         var readResult = await _telemetryChar
             .ReadValueAsync(cacheMode)
             .AsTask()
             .ConfigureAwait(false);
 
         if (readResult.Status == GattCommunicationStatus.Success)
-            ParseTelemetryPacket(readResult.Value);
+            HandleBatteryReading(readResult.Value);
+    }
+
+    /// <summary>
+    /// Subscribe to the device's state characteristic and read its current value.
+    ///
+    /// Optional by design: firmware older than the characteristic simply has none, and
+    /// the app then behaves as it always did — it just cannot see changes other
+    /// clients make.
+    /// </summary>
+    private async Task SubscribeStateAsync(GattDeviceService service, BluetoothCacheMode cacheMode)
+    {
+        var result = await service
+            .GetCharacteristicsForUuidAsync(StateCharUuid, cacheMode)
+            .AsTask()
+            .ConfigureAwait(false);
+
+        if (result.Status != GattCommunicationStatus.Success
+            || result.Characteristics.Count == 0)
+        {
+            LogService.Log($"[BLE:{DeviceName}] State characteristic not found — " +
+                           $"changes made by other clients will stay invisible.");
+            return;
+        }
+
+        _stateChar = result.Characteristics[0];
+
+        var cccdResult = await _stateChar
+            .WriteClientCharacteristicConfigurationDescriptorAsync(
+                GattClientCharacteristicConfigurationDescriptorValue.Notify)
+            .AsTask()
+            .ConfigureAwait(false);
+
+        if (cccdResult == GattCommunicationStatus.Success)
+        {
+            _stateChar.ValueChanged += OnStateValueChanged;
+            LogService.Log($"[BLE:{DeviceName}] State notifications enabled.");
+        }
+        else
+        {
+            LogService.Log($"[BLE:{DeviceName}] Could not enable state notifications: {cccdResult}");
+        }
+
+        // Uncached: a cached read would hand back whatever Windows saw last, which is
+        // exactly the stale answer this call exists to avoid.
+        var readResult = await _stateChar
+            .ReadValueAsync(BluetoothCacheMode.Uncached)
+            .AsTask()
+            .ConfigureAwait(false);
+
+        if (readResult.Status == GattCommunicationStatus.Success)
+            HandleDeviceState(readResult.Value);
+    }
+
+    private void OnStateValueChanged(GattCharacteristic sender, GattValueChangedEventArgs args)
+        => HandleDeviceState(args.CharacteristicValue);
+
+    /// <summary>
+    /// Interpret a state packet from the device and raise
+    /// <see cref="DeviceStateChanged"/> when it did not come from us.
+    /// </summary>
+    private void HandleDeviceState(IBuffer buffer)
+    {
+        var bytes = new byte[buffer.Length];
+        DataReader.FromBuffer(buffer).ReadBytes(bytes);
+
+        var state = LedCommand.FromBytes(bytes);
+        if (state is null) return;
+
+        LastDeviceState = state;
+
+        // Our own write coming back around. Acting on it would have the tray chase
+        // its own tail, and every write would land twice in the history.
+        if (state.Equals(_lastSentCommand)) return;
+
+        // Somebody else moved the ring. Record it as the last known truth so the
+        // debounce in SendCommandAsync compares against what the device really shows
+        // rather than against what we last sent.
+        _lastSentCommand = state;
+
+        LogService.Log($"[BLE:{DeviceName}] Ring changed by another client: " +
+                       $"RGB {state.R},{state.G},{state.B} mode={state.Mode}");
+
+        DeviceStateChanged?.Invoke(this, state);
+    }
+
+    /// <summary>
+    /// Re-read the state characteristic on a slow cycle while connected, so a lost
+    /// notification cannot leave the two clients disagreeing indefinitely.
+    /// </summary>
+    private async Task StatePollLoopAsync(CancellationToken ct)
+    {
+        using var timer = new PeriodicTimer(TimeSpan.FromSeconds(StatePollIntervalSeconds));
+
+        try
+        {
+            while (await timer.WaitForNextTickAsync(ct).ConfigureAwait(false))
+            {
+                if (!_connected || _stateChar is null) continue;
+
+                try
+                {
+                    var result = await _stateChar
+                        .ReadValueAsync(BluetoothCacheMode.Uncached)
+                        .AsTask()
+                        .ConfigureAwait(false);
+
+                    if (result.Status == GattCommunicationStatus.Success)
+                        HandleDeviceState(result.Value);
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    // A failed read is not worth tearing the link down for — the next
+                    // tick tries again, and a genuinely dead link is noticed elsewhere.
+                    LogService.Log($"[BLE:{DeviceName}] State poll failed: {ex.Message}");
+                }
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            // Normal shutdown
+        }
     }
 
     /// <summary>
@@ -646,14 +813,9 @@ public sealed class BleService : IDisposable
 
             if (result.Status != GattCommunicationStatus.Success) return null;
 
-            var reading = ParseTelemetryPacket(result.Value);
-            if (reading is not null)
-            {
-                LastBatteryReading = reading;
-                LogService.Log($"[BLE:{DeviceName}] Battery: {reading}");
-                BatteryChanged?.Invoke(this, reading);
-            }
-            return LastBatteryReading;
+            // Null when the measurement was not usable — the caller must not fall back
+            // to the previous value and present it as fresh.
+            return HandleBatteryReading(result.Value);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
@@ -665,12 +827,39 @@ public sealed class BleService : IDisposable
     private void OnTelemetryValueChanged(
         GattCharacteristic sender,
         GattValueChangedEventArgs args)
+        => HandleBatteryReading(args.CharacteristicValue);
+
+    /// <summary>
+    /// Parse a telemetry packet, keep it only if it can be a real cell voltage, and
+    /// tell the tray about it.
+    ///
+    /// The plausibility check lives here rather than at each consumer because the
+    /// tooltip, the settings window, the history chart and the low-battery warning all
+    /// draw from this one path — a filter at any one of them would leave the others
+    /// showing the same fiction.
+    /// </summary>
+    private BatteryReading? HandleBatteryReading(IBuffer buffer)
     {
-        var reading = ParseTelemetryPacket(args.CharacteristicValue);
-        if (reading is null) return;
+        var reading = ParseTelemetryPacket(buffer);
+        if (reading is null) return null;
+
+        if (!reading.IsPlausible)
+        {
+            if (!_implausibleBatteryLogged)
+            {
+                _implausibleBatteryLogged = true;
+                LogService.Log(
+                    $"[BLE:{DeviceName}] Battery reading {reading} is below " +
+                    $"{BatteryReading.MinPlausibleMv} mV — discarding it as an invalid " +
+                    $"measurement (USB attached?). Further ones stay silent until reconnect.");
+            }
+            return null;
+        }
+
         LastBatteryReading = reading;
         LogService.Log($"[BLE:{DeviceName}] Battery: {reading}");
         BatteryChanged?.Invoke(this, reading);
+        return reading;
     }
 
     private static BatteryReading? ParseTelemetryPacket(Windows.Storage.Streams.IBuffer buffer)
@@ -704,7 +893,14 @@ public sealed class BleService : IDisposable
             _telemetryChar.ValueChanged -= OnTelemetryValueChanged;
             _telemetryChar = null;
         }
+        if (_stateChar is not null)
+        {
+            _stateChar.ValueChanged -= OnStateValueChanged;
+            _stateChar = null;
+        }
         LastBatteryReading       = null;
+        LastDeviceState          = null;
+        _implausibleBatteryLogged = false;
         FirmwareProtocolVersion  = null;
         _connectDiagnosticRaised = false;
         _device?.Dispose();

@@ -179,8 +179,7 @@ void BleServer::begin(LedController& ledController) {
     pAdvertising->setMinInterval(BLE_ADV_INTERVAL_MIN);
     pAdvertising->setMaxInterval(BLE_ADV_INTERVAL_MAX);
 
-    pAdvertising->start();
-    _advertising = true;
+    startAdvertising();
 
     Serial.printf("[BLE] Advertising started. Up to %u clients.\n",
                   (unsigned)BLE_MAX_CLIENTS);
@@ -196,29 +195,46 @@ void BleServer::update() {
     if (count != _oldCount) {
         Serial.printf("[BLE] Clients connected: %u/%u\n",
                       (unsigned)count, (unsigned)BLE_MAX_CLIENTS);
-
-        // BLE stops advertising the moment a connection is established.  The
-        // previous version only restarted it after a disconnect, which is why
-        // a second client could never even discover the device.
-        if (count > _oldCount) _advertising = false;
         _oldCount = count;
-
-        if (count < BLE_MAX_CLIENTS && !_advertising) {
-            _advertisePending = true;
-            _advertiseSetAtMs = millis();
-        } else if (count >= BLE_MAX_CLIENTS) {
-            _advertisePending = false;  // full — stop offering a slot
-            Serial.println("[BLE] All client slots taken.");
-        }
     }
 
-    if (_advertisePending && millis() - _advertiseSetAtMs >= BLE_ADV_RESTART_DELAY_MS) {
+    // Whether we advertise is decided from what the radio is actually doing and
+    // re-decided on every tick — not from a remembered flag, and not only when
+    // the client count changes.
+    //
+    // This firmware is the ONLY thing that ever brings advertising back: BLE
+    // stops advertising on every established connection, and the library's own
+    // restart-on-disconnect is off unless asked for
+    // (BLEServer::m_advertiseOnDisconnect defaults to false).  Deriving the
+    // decision from a flag therefore had no safety net — a start the stack
+    // refused, or a connect and disconnect that both fell between two polls,
+    // silently left the device undiscoverable with nothing able to notice.  The
+    // ring then went dark once the LED hold expired, the Windows app never saw
+    // an advertisement to connect to, and the PWA's reconnect waited forever.
+    const bool slotFree = count < BLE_MAX_CLIENTS;
+
+    if (slotFree && !isAdvertising()) {
+        // Wait out the settle time before (re)starting — without blocking loop().
+        if (!_advertisePending) {
+            _advertisePending = true;
+            _advertiseSetAtMs = millis();
+        } else if (millis() - _advertiseSetAtMs >= BLE_ADV_RESTART_DELAY_MS) {
+            _advertisePending = false;
+            if (startAdvertising()) {
+                Serial.println("[BLE] Advertising — a client slot is free.");
+            } else {
+                Serial.println("[BLE] Advertising start refused — retrying.");
+            }
+        }
+    } else {
         _advertisePending = false;
-        // Re-check: a slot may have filled while we waited out the settle time.
-        if (_pServer->getConnectedCount() < BLE_MAX_CLIENTS) {
-            _pServer->startAdvertising();
-            _advertising = true;
-            Serial.println("[BLE] Advertising — a client slot is free.");
+
+        // All slots taken: stop offering one.  BLE_MAX_CLIENTS is deliberately
+        // below what the stack would accept (CONFIG_BT_NIMBLE_MAX_CONNECTIONS),
+        // so nothing but this enforces the cap.
+        if (!slotFree && isAdvertising()) {
+            stopAdvertising();
+            Serial.println("[BLE] All client slots taken — advertising stopped.");
         }
     }
 
@@ -249,6 +265,36 @@ void BleServer::update() {
         _statePublishPending = false;
         publishState();
     }
+}
+
+// ============================================================
+// Advertising control
+// ============================================================
+
+bool BleServer::isAdvertising() const {
+#if defined(CONFIG_NIMBLE_ENABLED)
+    // Ask the radio.  Anything we remember ourselves can drift out of step with
+    // it; this answer cannot.
+    return BLEDevice::getAdvertising()->isAdvertising();
+#else
+    // Bluedroid offers no query, and its start is asynchronous anyway, so the
+    // mirror is the best available answer here.
+    return _advertising;
+#endif
+}
+
+bool BleServer::startAdvertising() {
+    // BLEDevice::getAdvertising()->start() reports whether the stack accepted
+    // the request; BLEServer::startAdvertising() returns void and would hide a
+    // refusal.  update() retries on false rather than assuming success.
+    const bool ok = BLEDevice::getAdvertising()->start();
+    _advertising = ok;
+    return ok;
+}
+
+void BleServer::stopAdvertising() {
+    BLEDevice::getAdvertising()->stop();
+    _advertising = false;
 }
 
 BleServer::PendingConnParam* BleServer::freeConnParamSlot() {

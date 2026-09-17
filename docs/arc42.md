@@ -249,11 +249,18 @@ The ring accepts `BLE_MAX_CLIENTS` (2) connections at once — typically the Win
 app and the phone PWA. Three things make that work, and each was a genuine blocker
 before:
 
-1. **Advertising restarts after every connect.** BLE stops advertising as soon as a
-   connection is established. The firmware previously restarted it only on *disconnect*,
-   so while one client was attached, a second could not even discover the device.
-   `update()` now resumes advertising whenever a slot is free and stops offering one
-   when full.
+1. **Advertising follows the radio, re-checked every tick.** BLE stops advertising as
+   soon as a connection is established, and the library's own restart-on-disconnect is
+   *off* unless enabled (`BLEServer::m_advertiseOnDisconnect` defaults to `false`), so
+   the firmware is the only thing that ever brings advertising back. `update()` therefore
+   asks the stack whether it is advertising (`ble_gap_adv_active()`) instead of
+   remembering it, and re-decides on every tick rather than only when the client count
+   changes. A remembered flag had no way back from a start the stack refused, or from a
+   connect and disconnect that both fell between two polls: the device stayed silently
+   undiscoverable, the ring went dark once the LED hold expired, the Windows app never
+   saw an advertisement to connect to and the PWA's reconnect waited forever.
+   Advertising is also stopped explicitly when all slots are full — `BLE_MAX_CLIENTS` is
+   below what the stack would accept, so nothing else enforces the cap.
 2. **The connection count is the library's**, read via `getConnectedCount()` rather than
    a local `bool`. A flag was wrong for two clients: one leaving set it to `false` while
    the other was still attached, which blanked the ring into hold mode and stopped
@@ -295,6 +302,7 @@ A single read-only byte characteristic (`feda0103-…`) exposes the firmware's p
 | v0.3.0  | 1                | App-only update (BLE fixes, logging, UI improvements); firmware unchanged |
 | v0.4.0  | 1                | App-only update (battery monitoring, history charts); firmware unchanged |
 | v0.5.0  | 1                | App-only update (keep LEDs on disabled status / screen lock); firmware unchanged |
+| v0.6.0  | 1                | Advertising recovery (firmware), cross-client status sync, optional Teams connection, battery plausibility filter |
 
 **Rules for incrementing `PROTOCOL_VERSION` (in `firmware/BusyLight/config.h`):**
 

@@ -144,14 +144,38 @@ public sealed class TrayApplication : ApplicationContext
 
             // ── Graph / Teams setup ───────────────────────────────────────────
 
+            // The Teams connection is optional.  Where IT will not grant an app
+            // registration, presence comes from the Override submenu instead, and the
+            // rest of the tray — BLE, colours, history — works unchanged.  So a Graph
+            // setup that fails is an expected state: it must neither abort the rest of
+            // startup nor greet the user with an error balloon on every launch.
             if (!string.IsNullOrWhiteSpace(_settings.AzureAd.ClientId))
             {
-                _graphService = new GraphService(_settings);
-                _graphService.PresenceChanged += OnPresenceChanged;
-                _graphService.ErrorOccurred   += OnServiceError;
+                var graph = new GraphService(_settings);
+                graph.PresenceChanged += OnPresenceChanged;
+                graph.ErrorOccurred   += OnServiceError;
 
-                await _graphService.AuthenticateAsync().ConfigureAwait(false);
-                _graphService.StartPolling();
+                try
+                {
+                    await graph.AuthenticateAsync().ConfigureAwait(false);
+                    graph.StartPolling();
+                    _graphService = graph;
+                }
+                catch (Exception ex)
+                {
+                    // _graphService stays null on purpose.  Every later call site is
+                    // written as `_graphService?.…`, and a half-built service would
+                    // sail straight past those guards — which is exactly how "Clear
+                    // Override" used to end in a NullReferenceException.
+                    graph.Dispose();
+                    Services.LogService.Log(
+                        $"[TrayApp] Teams-Präsenz nicht verfügbar — manueller Modus. {ex.Message}");
+                    InvokeOnUiThread(() =>
+                        _notifyIcon.ShowBalloonTip(5000, "BusyLight",
+                            "Teams-Präsenz nicht verfügbar — manueller Modus. " +
+                            "Status über „Override“ im Tray-Menü setzen.",
+                            ToolTipIcon.Info));
+                }
             }
         }
         catch (Exception ex)
@@ -176,6 +200,7 @@ public sealed class TrayApplication : ApplicationContext
         _bleService.ConnectionChanged += OnBleConnectionChanged;
         _bleService.ErrorOccurred     += OnServiceError;
         _bleService.BatteryChanged    += OnBatteryChanged;
+        _bleService.DeviceStateChanged += OnDeviceStateChanged;
         _bleService.StartScanning();
     }
 
@@ -278,7 +303,14 @@ public sealed class TrayApplication : ApplicationContext
 
     // ── Override logic ────────────────────────────────────────────────────────
 
-    private void ApplyOverride(string presenceKey)
+    private void ApplyOverride(string presenceKey) => ApplyOverride(presenceKey, send: true);
+
+    /// <param name="send">
+    /// False when the ring already shows this status because another client put it
+    /// there.  Writing it back would only repaint the same status in this app's own
+    /// brightness, and the resulting echo would be one more packet for nothing.
+    /// </param>
+    private void ApplyOverride(string presenceKey, bool send)
     {
         _activeOverride = presenceKey;
         PersistOverrideIfNeeded();
@@ -288,7 +320,50 @@ public sealed class TrayApplication : ApplicationContext
             RefreshOverrideUi();
             RecordPresenceChange(presenceKey, isOverride: true);
         });
-        SendLedCommand(presenceKey);
+        if (send) SendLedCommand(presenceKey);
+    }
+
+    /// <summary>
+    /// The ring changed and it was not us — the phone PWA moved it.  Adopt that status
+    /// as the active override so the tray shows the truth and, just as importantly,
+    /// stops overwriting it on the next reconnect or screen unlock.
+    ///
+    /// A colour the presence map does not know (the colour wheel on either side) has no
+    /// status to adopt; it is logged and left alone, and the next deliberate action of
+    /// this app takes the ring back.
+    /// </summary>
+    private void OnDeviceStateChanged(object? sender, LedCommand state)
+    {
+        string? key = MatchPresenceKey(state);
+
+        if (key is null)
+        {
+            Services.LogService.Log(
+                $"[TrayApp] Ring set to a colour no presence entry matches " +
+                $"(RGB {state.R},{state.G},{state.B} mode {state.Mode}) — leaving it alone.");
+            return;
+        }
+
+        if (key == _activeOverride) return;  // already where we are
+
+        Services.LogService.Log($"[TrayApp] Adopting status set by another client: {key}");
+        ApplyOverride(key, send: false);
+    }
+
+    /// <summary>
+    /// Find the presence entry whose appearance matches <paramref name="state"/>, or
+    /// null when none does.  Disabled entries are skipped: they are never sent, so
+    /// matching one would adopt a status this user has switched off.
+    /// </summary>
+    private string? MatchPresenceKey(LedCommand state)
+    {
+        foreach (var (key, settings) in _settings.PresenceMap)
+        {
+            if (!settings.Enabled) continue;
+            if (state.MatchesAppearance(LedCommand.FromPresenceSettings(settings)))
+                return key;
+        }
+        return null;
     }
 
     private void ClearOverride()
@@ -637,6 +712,7 @@ public sealed class TrayApplication : ApplicationContext
                 _bleService.ConnectionChanged -= OnBleConnectionChanged;
                 _bleService.ErrorOccurred     -= OnServiceError;
                 _bleService.BatteryChanged    -= OnBatteryChanged;
+                _bleService.DeviceStateChanged -= OnDeviceStateChanged;
                 _bleService.Stop();
                 _bleService.Dispose();
                 _bleService = null;

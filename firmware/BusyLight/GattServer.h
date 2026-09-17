@@ -49,12 +49,18 @@ private:
     uint32_t _oldCount = 0;
 
     // Deferred, non-blocking advertising restart (see BLE_ADV_RESTART_DELAY_MS).
-    // _advertising mirrors what we believe the radio is doing: BLE stops
-    // advertising on every established connection, so it is cleared whenever a
-    // client arrives and set again when we restart.  Without it, a client
-    // leaving while we already advertise would trigger a redundant start.
     bool          _advertisePending = false;
     unsigned long _advertiseSetAtMs = 0;
+
+    // Fallback mirror of the advertising state, used ONLY where the stack has no
+    // query of its own (Bluedroid).  Under NimBLE isAdvertising() asks the radio.
+    //
+    // Mirroring alone was a trap of the same kind as the old _deviceConnected
+    // bool: the flag was set whether or not the start had actually worked, and
+    // was only ever cleared when a client arrived.  One failed start — or a
+    // connect and a disconnect both falling between two polls — left the device
+    // convinced it was advertising when it was not, and nothing could ever
+    // correct it again.
     bool          _advertising      = false;
 
     // Pending connection-parameter updates, one slot per client (sent one tick
@@ -76,6 +82,14 @@ private:
 
     // First unused connection-parameter slot, or nullptr when all are taken.
     PendingConnParam* freeConnParamSlot();
+
+    // Advertising control.  isAdvertising() is the single source of truth for
+    // whether the device can currently be discovered; start/stop keep the
+    // Bluedroid fallback mirror in step.  start() reports whether the radio
+    // accepted the request, so a refusal is retried instead of being lost.
+    bool isAdvertising() const;
+    bool startAdvertising();
+    void stopAdvertising();
 
     // Reference to the LED controller, set in begin().
     LedController* _ledController = nullptr;

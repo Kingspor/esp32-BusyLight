@@ -80,9 +80,13 @@ Merge a PR to `main` with a bumped `<Version>` in `BusyLight.csproj` → `auto-r
 - **Two clients at once** (`GattServer.cpp`): the Windows app and the PWA can hold the
   link simultaneously (`BLE_MAX_CLIENTS = 2`). BLE stops advertising on every established
   connection, so `update()` restarts it whenever a slot is free — without that, a second
-  client could never discover the device. The connection count comes from the BLE
-  library (`getConnectedCount()`), never from a local flag, and the LED hold arms only
-  when the **last** client leaves.
+  client could never discover the device. Neither the connection count nor the
+  advertising state is ever mirrored in a local flag: the count comes from the BLE
+  library (`getConnectedCount()`) and the advertising state from the radio
+  (`BLEAdvertising::isAdvertising()`), re-checked every tick. The library does **not**
+  re-advertise on its own (`m_advertiseOnDisconnect` defaults to `false`), so a flag that
+  drifted out of step left the device undiscoverable with nothing able to correct it.
+  The LED hold arms only when the **last** client leaves.
 - **`config.h`**: Single source of truth for BLE UUIDs, pin definitions, protocol version.
 
 ### PWA

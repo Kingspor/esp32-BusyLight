@@ -185,8 +185,10 @@ public sealed class BleService : IDisposable
         // for a fresh advertisement we guarantee that precondition is met.
         StartWatcher();
 
-        _ = Task.Run(() => RetryLoopAsync(_cts.Token));
-        _ = Task.Run(() => StatePollLoopAsync(_cts.Token));
+        // The token goes to Task.Run itself as well as into the loop body: without it,
+        // a Stop() falling between scheduling and starting would still run one pass.
+        _ = Task.Run(() => RetryLoopAsync(_cts.Token), _cts.Token);
+        _ = Task.Run(() => StatePollLoopAsync(_cts.Token), _cts.Token);
     }
 
     /// <summary>Stop scanning and the reconnect loop.</summary>

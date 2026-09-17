@@ -67,6 +67,10 @@ Merge a PR to `main` with a bumped `<Version>` in `BusyLight.csproj` → `auto-r
   - `ConfigurationService`: Reads/writes `%APPDATA%\BusyLight\appsettings.json`. Settings saves are non-disruptive to BLE.
 - **Forms layer** (`Forms/`): `StatusForm`, `SettingsForm`, `HistoryForm`, `ColorWheelForm`, `BlePickerForm` — all opened on demand from the tray menu.
 - **Configuration-driven LED mapping**: `AppSettings.cs` holds a per-presence-status mapping (color, mode, speed, brightness). Adding a new Teams status only requires a new entry in `appsettings.json`.
+- **Teams is optional**: where no app registration can be had, `AuthenticateAsync`
+  failing is an expected state, not a startup error — the tray then runs on the Override
+  submenu alone. `_graphService` stays null in that case so the `?.` guards at every call
+  site actually hold.
 - **Threading**: UI thread (WinForms message loop) + ThreadPool (Graph polling, BLE ops). All UI updates marshalled via captured `SynchronizationContext`.
 
 ### Firmware (C++/Arduino)

@@ -144,14 +144,38 @@ public sealed class TrayApplication : ApplicationContext
 
             // ── Graph / Teams setup ───────────────────────────────────────────
 
+            // The Teams connection is optional.  Where IT will not grant an app
+            // registration, presence comes from the Override submenu instead, and the
+            // rest of the tray — BLE, colours, history — works unchanged.  So a Graph
+            // setup that fails is an expected state: it must neither abort the rest of
+            // startup nor greet the user with an error balloon on every launch.
             if (!string.IsNullOrWhiteSpace(_settings.AzureAd.ClientId))
             {
-                _graphService = new GraphService(_settings);
-                _graphService.PresenceChanged += OnPresenceChanged;
-                _graphService.ErrorOccurred   += OnServiceError;
+                var graph = new GraphService(_settings);
+                graph.PresenceChanged += OnPresenceChanged;
+                graph.ErrorOccurred   += OnServiceError;
 
-                await _graphService.AuthenticateAsync().ConfigureAwait(false);
-                _graphService.StartPolling();
+                try
+                {
+                    await graph.AuthenticateAsync().ConfigureAwait(false);
+                    graph.StartPolling();
+                    _graphService = graph;
+                }
+                catch (Exception ex)
+                {
+                    // _graphService stays null on purpose.  Every later call site is
+                    // written as `_graphService?.…`, and a half-built service would
+                    // sail straight past those guards — which is exactly how "Clear
+                    // Override" used to end in a NullReferenceException.
+                    graph.Dispose();
+                    Services.LogService.Log(
+                        $"[TrayApp] Teams-Präsenz nicht verfügbar — manueller Modus. {ex.Message}");
+                    InvokeOnUiThread(() =>
+                        _notifyIcon.ShowBalloonTip(5000, "BusyLight",
+                            "Teams-Präsenz nicht verfügbar — manueller Modus. " +
+                            "Status über „Override“ im Tray-Menü setzen.",
+                            ToolTipIcon.Info));
+                }
             }
         }
         catch (Exception ex)

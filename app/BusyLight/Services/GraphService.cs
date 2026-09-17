@@ -144,6 +144,13 @@ public sealed class GraphService : IDisposable
 
     private async Task PollPresenceAsync()
     {
+        // No client means AuthenticateAsync() never succeeded — a normal state, not a
+        // fault: where IT will not grant an app registration, the tray runs on manual
+        // overrides alone.  The guard belongs here because FetchNowAsync() is public
+        // and fires on "Clear Override", where a null client would otherwise surface
+        // as "Object reference not set to an instance of an object".
+        if (_graphClient is null) return;
+
         try
         {
             var presence = await _graphClient!.Me.Presence

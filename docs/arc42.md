@@ -302,6 +302,7 @@ A single read-only byte characteristic (`feda0103-…`) exposes the firmware's p
 | v0.3.0  | 1                | App-only update (BLE fixes, logging, UI improvements); firmware unchanged |
 | v0.4.0  | 1                | App-only update (battery monitoring, history charts); firmware unchanged |
 | v0.5.0  | 1                | App-only update (keep LEDs on disabled status / screen lock); firmware unchanged |
+| v0.6.0  | 1                | Advertising recovery (firmware), cross-client status sync, optional Teams connection, battery plausibility filter |
 
 **Rules for incrementing `PROTOCOL_VERSION` (in `firmware/BusyLight/config.h`):**
 

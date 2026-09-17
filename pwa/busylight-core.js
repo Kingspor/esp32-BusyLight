@@ -80,6 +80,22 @@ export function parseTelemetry(dataView) {
 }
 
 /**
+ * Below this a reading is not a low battery but a broken measurement.
+ *
+ * A Li-Ion 18650 in service never gets here — its protection circuit cuts out between
+ * 2.5 and 3.0 V, and the step-up converter gives up well before that, so a cell this
+ * low could not be powering the device that reports it. What does produce such values
+ * is USB being plugged into the ESP: the measured node then collapses to around 1.7 V
+ * while the cell itself is fine.
+ */
+export const MIN_PLAUSIBLE_BATTERY_MV = 2500;
+
+/** False when a telemetry reading cannot be a real cell voltage. */
+export function isPlausibleBattery(reading) {
+  return Boolean(reading) && reading.mv >= MIN_PLAUSIBLE_BATTERY_MV;
+}
+
+/**
  * Parse the 6-byte state DataView — the command the ring is currently showing.
  * Same byte layout as the LED command packet, so the device reports its state
  * in exactly the format it accepts.

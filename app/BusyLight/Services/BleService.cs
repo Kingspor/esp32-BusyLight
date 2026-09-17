@@ -136,6 +136,13 @@ public sealed class BleService : IDisposable
     /// </summary>
     private bool _connectDiagnosticRaised;
 
+    /// <summary>
+    /// True once an implausible battery reading has been reported for this connection.
+    /// With USB attached every single notify is implausible, and one line per reading
+    /// would bury everything else in the log.
+    /// </summary>
+    private bool _implausibleBatteryLogged;
+
     /// <summary>Prevents concurrent connection attempts.</summary>
     private readonly SemaphoreSlim _connectLock = new(1, 1);
 
@@ -653,14 +660,17 @@ public sealed class BleService : IDisposable
             LogService.Log($"[BLE:{DeviceName}] Could not enable telemetry notifications: {cccdResult}");
         }
 
-        // Read initial value so the UI shows something before the first notify fires
+        // Read the initial value so the UI shows something before the first notify.
+        // This used to parse the packet and throw the result away, so the promise in
+        // the comment was never kept — the tooltip stayed empty until the first notify,
+        // up to five minutes later.
         var readResult = await _telemetryChar
             .ReadValueAsync(cacheMode)
             .AsTask()
             .ConfigureAwait(false);
 
         if (readResult.Status == GattCommunicationStatus.Success)
-            ParseTelemetryPacket(readResult.Value);
+            HandleBatteryReading(readResult.Value);
     }
 
     /// <summary>
@@ -801,14 +811,9 @@ public sealed class BleService : IDisposable
 
             if (result.Status != GattCommunicationStatus.Success) return null;
 
-            var reading = ParseTelemetryPacket(result.Value);
-            if (reading is not null)
-            {
-                LastBatteryReading = reading;
-                LogService.Log($"[BLE:{DeviceName}] Battery: {reading}");
-                BatteryChanged?.Invoke(this, reading);
-            }
-            return LastBatteryReading;
+            // Null when the measurement was not usable — the caller must not fall back
+            // to the previous value and present it as fresh.
+            return HandleBatteryReading(result.Value);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
@@ -820,12 +825,39 @@ public sealed class BleService : IDisposable
     private void OnTelemetryValueChanged(
         GattCharacteristic sender,
         GattValueChangedEventArgs args)
+        => HandleBatteryReading(args.CharacteristicValue);
+
+    /// <summary>
+    /// Parse a telemetry packet, keep it only if it can be a real cell voltage, and
+    /// tell the tray about it.
+    ///
+    /// The plausibility check lives here rather than at each consumer because the
+    /// tooltip, the settings window, the history chart and the low-battery warning all
+    /// draw from this one path — a filter at any one of them would leave the others
+    /// showing the same fiction.
+    /// </summary>
+    private BatteryReading? HandleBatteryReading(IBuffer buffer)
     {
-        var reading = ParseTelemetryPacket(args.CharacteristicValue);
-        if (reading is null) return;
+        var reading = ParseTelemetryPacket(buffer);
+        if (reading is null) return null;
+
+        if (!reading.IsPlausible)
+        {
+            if (!_implausibleBatteryLogged)
+            {
+                _implausibleBatteryLogged = true;
+                LogService.Log(
+                    $"[BLE:{DeviceName}] Battery reading {reading} is below " +
+                    $"{BatteryReading.MinPlausibleMv} mV — discarding it as an invalid " +
+                    $"measurement (USB attached?). Further ones stay silent until reconnect.");
+            }
+            return null;
+        }
+
         LastBatteryReading = reading;
         LogService.Log($"[BLE:{DeviceName}] Battery: {reading}");
         BatteryChanged?.Invoke(this, reading);
+        return reading;
     }
 
     private static BatteryReading? ParseTelemetryPacket(Windows.Storage.Streams.IBuffer buffer)
@@ -866,6 +898,7 @@ public sealed class BleService : IDisposable
         }
         LastBatteryReading       = null;
         LastDeviceState          = null;
+        _implausibleBatteryLogged = false;
         FirmwareProtocolVersion  = null;
         _connectDiagnosticRaised = false;
         _device?.Dispose();

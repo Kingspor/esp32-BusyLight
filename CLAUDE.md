@@ -78,6 +78,12 @@ Merge a PR to `main` with a bumped `<Version>` in `BusyLight.csproj` → `auto-r
   brightness is per-client, so `LedCommand.MatchesAppearance` compares the colour
   normalised to its strongest channel, plus the mode. A colour no entry matches is left
   alone rather than guessed at.
+- **Battery readings are filtered for plausibility** (`BatteryReading.MinPlausibleMv`,
+  2500 mV). With USB plugged into the ESP the measured node collapses to ~1.7 V while
+  the cell is fine — a value no 18650 in service can have, since its protection cuts out
+  at 2.5–3.0 V. Such readings are dropped in `BleService.HandleBatteryReading`, the one
+  path the tooltip, settings window, history chart and low-battery warning all feed
+  from. The PWA applies the same floor (`isPlausibleBattery`) and shows `—`.
 - **Teams is optional**: where no app registration can be had, `AuthenticateAsync`
   failing is an expected state, not a startup error — the tray then runs on the Override
   submenu alone. `_graphService` stays null in that case so the `?.` guards at every call

@@ -7,6 +7,7 @@ import {
   loadPresets, savePreset, resetPreset,
   saveLastDevice, loadLastDevice, clearLastDevice, reconnectDelayMs,
   withTimeout, CONNECT_TIMEOUT_MS,
+  isPlausibleBattery,
 } from './busylight-core.js';
 
 // ── State ────────────────────────────────────────────────────────────────────
@@ -398,12 +399,22 @@ function setConnectionState(state, detail = '') {
   document.querySelectorAll('.preset-btn').forEach(b => { b.disabled = !connected; });
 }
 
-function updateBattery({ mv, soc }) {
+function updateBattery(reading) {
   const el = document.getElementById('batteryText');
+  el.hidden = false;
+
+  // Not a flat cell — a measurement that cannot be one. Admitting we do not know
+  // beats inventing a percentage and colouring it red.
+  if (!isPlausibleBattery(reading)) {
+    el.textContent = '🔌 Akku —';
+    el.className   = 'battery-text';
+    return;
+  }
+
+  const { mv, soc } = reading;
   const icon = soc <= 20 ? '🪫' : '🔋';
   el.textContent = `${icon} ${soc} % · ${(mv / 1000).toFixed(2)} V`;
   el.className   = 'battery-text' + (soc <= 20 ? ' low' : '');
-  el.hidden      = false;
 }
 
 function clearActivePreset() {

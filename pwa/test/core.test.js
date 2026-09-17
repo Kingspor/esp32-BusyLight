@@ -9,6 +9,7 @@ import {
   parseState, matchPreset, STATE_CHAR_UUID,
   withTimeout, CONNECT_TIMEOUT_MS,
   isDark, normalisedColour, sameAppearance,
+  isPlausibleBattery, MIN_PLAUSIBLE_BATTERY_MV,
 } from '../busylight-core.js';
 
 // Node has no localStorage without --experimental-webstorage, so the storage
@@ -549,5 +550,31 @@ describe('sameAppearance', () => {
   test('handles missing operands instead of throwing', () => {
     assert.ok(!sameAppearance(null, at(0, 255, 0)));
     assert.ok(!sameAppearance(at(0, 255, 0), undefined));
+  });
+});
+
+// ── Battery plausibility ──────────────────────────────────────────────────────
+describe('isPlausibleBattery', () => {
+  test('accepts voltages a working 18650 can actually have', () => {
+    assert.ok(isPlausibleBattery({ mv: 4020, soc: 80 }));   // measured on battery
+    assert.ok(isPlausibleBattery({ mv: 3000, soc: 3 }));    // nearly empty, still real
+  });
+
+  test('rejects the value USB produces', () => {
+    // 1738 mV is what the node collapses to with USB attached; the cell is fine.
+    assert.ok(!isPlausibleBattery({ mv: 1738, soc: 0 }));
+    assert.ok(!isPlausibleBattery({ mv: 71, soc: 0 }));     // switch off
+  });
+
+  test('the threshold sits below any cell in service, above any artefact', () => {
+    // Protection circuits cut out at 2.5–3.0 V, so nothing real arrives under 2.5 V.
+    assert.equal(MIN_PLAUSIBLE_BATTERY_MV, 2500);
+    assert.ok(isPlausibleBattery({ mv: MIN_PLAUSIBLE_BATTERY_MV, soc: 0 }));
+    assert.ok(!isPlausibleBattery({ mv: MIN_PLAUSIBLE_BATTERY_MV - 1, soc: 0 }));
+  });
+
+  test('handles a missing reading instead of throwing', () => {
+    assert.ok(!isPlausibleBattery(null));
+    assert.ok(!isPlausibleBattery(undefined));
   });
 });
